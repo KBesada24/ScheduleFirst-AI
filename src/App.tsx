@@ -25,6 +25,9 @@ function PrivateRoute({ children }: { children: React.ReactNode }) {
 }
 
 function AppRoutes() {
+  // Ensure hook is always called consistently
+  const tempoRoutesElement = useRoutes(routes);
+
   return (
     <>
       <Routes>
@@ -46,7 +49,7 @@ function AppRoutes() {
           }
         />
       </Routes>
-      {import.meta.env.VITE_TEMPO === "true" && useRoutes(routes)}
+      {import.meta.env.VITE_TEMPO === "true" && Array.isArray(routes) && routes.length > 0 && tempoRoutesElement}
     </>
   );
 }

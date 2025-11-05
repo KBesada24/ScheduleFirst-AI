@@ -12,22 +12,29 @@ export default function SignUpForm() {
   const [password, setPassword] = useState("");
   const [fullName, setFullName] = useState("");
   const [error, setError] = useState("");
+  const [submitting, setSubmitting] = useState(false);
   const { signUp } = useAuth();
   const navigate = useNavigate();
   const { toast } = useToast();
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    setError("");
+    setSubmitting(true);
     try {
       await signUp(email, password, fullName);
       toast({
-        title: "Account created successfully",
-        description: "Please check your email to verify your account.",
+        title: "Account created",
+        description: "Check your email to verify your account.",
         duration: 5000,
       });
       navigate("/login");
-    } catch (error) {
-      setError("Error creating account");
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : "Error creating account";
+      setError(msg);
+      toast({ title: "Sign up failed", description: msg, variant: "destructive" });
+    } finally {
+      setSubmitting(false);
     }
   };
 
@@ -76,8 +83,9 @@ export default function SignUpForm() {
           <Button 
             type="submit" 
             className="w-full h-12 rounded-full bg-black text-white hover:bg-gray-800 text-sm font-medium"
+            disabled={submitting}
           >
-            Create account
+            {submitting ? "Creating..." : "Create account"}
           </Button>
           
           
