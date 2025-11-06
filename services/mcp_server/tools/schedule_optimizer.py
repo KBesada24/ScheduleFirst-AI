@@ -2,6 +2,7 @@
 MCP Tools for CUNY Schedule Optimizer
 FastMCP tool definitions for schedule optimization and professor evaluation
 """
+from datetime import datetime
 from typing import List, Dict, Optional
 from fastmcp import FastMCP
 
@@ -11,6 +12,7 @@ from ..services.ratemyprof_scraper import ratemyprof_scraper
 from ..services.sentiment_analyzer import sentiment_analyzer
 from ..models.schedule import ScheduleConstraints, ScheduleOptimizationRequest
 from ..models.professor import ProfessorGradeMetrics
+from ..models.course import CourseSearchFilter
 from ..utils.logger import get_logger
 from ..config import settings
 
@@ -44,13 +46,15 @@ async def fetch_course_sections(
         sections_data = []
         
         for course_code in course_codes:
-            # Get course
             if not university:
                 # Search across all universities
-                courses = await supabase_service.search_courses({
-                    'course_code': course_code,
-                    'semester': semester
-                })
+                courses = await supabase_service.search_courses(
+                    CourseSearchFilter(
+                        course_code=course_code,
+                        semester=semester
+                    )
+                )
+                course = courses[0] if courses else None
                 course = courses[0] if courses else None
             else:
                 course = await supabase_service.get_course_by_code(
@@ -140,7 +144,11 @@ async def generate_optimized_schedule(
             preferred_days=preferred_days,
             earliest_start_time=earliest_start_time,
             latest_end_time=latest_end_time,
-            min_professor_rating=min_professor_rating
+            min_professor_rating=min_professor_rating,
+            max_hours_per_day=None,
+            preferred_campuses=None,
+            min_credits=None,
+            max_credits=None
         )
         
         # Generate schedules
@@ -203,22 +211,13 @@ async def generate_optimized_schedule(
         }
 
 
-@mcp.tool()
-async def get_professor_grade(
+async def _get_professor_grade_impl(
     professor_name: str,
     university: str,
     course_code: Optional[str] = None
 ) -> Dict:
     """
-    Get AI-generated grade for a professor based on RateMyProfessors reviews
-    
-    Args:
-        professor_name: Full name of professor
-        university: CUNY school name
-        course_code: Optional course code to filter ratings
-    
-    Returns:
-        Dictionary with professor grade (A-F), metrics, and review analysis
+    Internal implementation for getting professor grade
     """
     try:
         logger.info(f"Fetching grade for {professor_name}")
@@ -268,6 +267,7 @@ async def get_professor_grade(
                     ProfessorCreate(
                         name=professor_name,
                         university=university,
+                        department=prof_info.get('department', 'Unknown'),
                         ratemyprof_id=prof_info.get('legacyId'),
                         average_rating=prof_info.get('avgRating'),
                         average_difficulty=prof_info.get('avgDifficulty'),
@@ -304,18 +304,38 @@ async def get_professor_grade(
 
 
 @mcp.tool()
+async def get_professor_grade(
+    professor_name: str,
+    university: str,
+    course_code: Optional[str] = None
+) -> Dict:
+    """
+    Get AI-generated grade for a professor based on RateMyProfessors reviews
+    
+    Args:
+        professor_name: Full name of professor
+        university: CUNY school name
+        course_code: Optional course code to filter ratings
+    
+    Returns:
+        Dictionary with professor grade (A-F), metrics, and review analysis
+    """
+    return await _get_professor_grade_impl(professor_name, university, course_code)
+
+
+@mcp.tool()
 async def compare_professors(
     professor_names: List[str],
     university: str,
     course_code: Optional[str] = None
 ) -> Dict:
     """
-    Compare multiple professors side-by-side
+    Compare multiple professors and get AI recommendation
     
     Args:
         professor_names: List of professor names to compare
         university: CUNY school name
-        course_code: Optional course code for context
+        course_code: Optional course code to filter ratings
     
     Returns:
         Comparison data with metrics and AI recommendation
@@ -326,7 +346,7 @@ async def compare_professors(
         professors_data = []
         
         for name in professor_names:
-            prof_grade = await get_professor_grade(name, university, course_code)
+            prof_grade = await _get_professor_grade_impl(name, university, course_code)
             if prof_grade['success']:
                 professors_data.append(prof_grade)
         

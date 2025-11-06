@@ -2,10 +2,9 @@
 Main entry point for CUNY Schedule Optimizer MCP Server
 """
 import asyncio
-from fastmcp import FastMCP
 
 from .config import settings
-from .utils.logger import get_logger, setup_logging
+from .utils.logger import get_logger
 from .tools import mcp
 from .services.supabase_service import supabase_service
 
@@ -13,8 +12,8 @@ from .services.supabase_service import supabase_service
 logger = get_logger(__name__)
 
 
-async def main():
-    """Main server entry point"""
+async def startup_checks():
+    """Perform startup checks before running server"""
     logger.info("=" * 60)
     logger.info("CUNY Schedule Optimizer MCP Server")
     logger.info("=" * 60)
@@ -29,7 +28,7 @@ async def main():
         logger.info("✓ Database connection healthy")
     else:
         logger.error("✗ Database connection failed")
-        return
+        logger.warning("Server will start but database operations may fail")
     
     logger.info("MCP Server ready!")
     logger.info("Available tools:")
@@ -39,14 +38,16 @@ async def main():
     logger.info("  - compare_professors")
     logger.info("  - check_schedule_conflicts")
     logger.info("=" * 60)
-    
-    # Run the MCP server
-    await mcp.run()
 
 
 if __name__ == "__main__":
     try:
-        asyncio.run(main())
+        # Run startup checks
+        asyncio.run(startup_checks())
+        
+        # Run the MCP server (this is synchronous and blocks)
+        logger.info("Starting MCP server...")
+        mcp.run()
     except KeyboardInterrupt:
         logger.info("Server shutdown requested")
     except Exception as e:
