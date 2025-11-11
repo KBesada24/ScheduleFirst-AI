@@ -1,10 +1,10 @@
 """
 Sentiment analysis service for professor reviews
-Uses Hugging Face transformers for aspect-based sentiment analysis
+Uses Google Gemini API for aspect-based sentiment analysis
 """
-from typing import List, Dict, Optional
-from transformers import pipeline, AutoTokenizer, AutoModelForSequenceClassification
-import torch
+from typing import List, Dict, Optional, Any, Union
+import json
+import google.generativeai as genai
 
 from ..config import settings
 from ..utils.logger import get_logger
@@ -14,113 +14,166 @@ logger = get_logger(__name__)
 
 
 class SentimentAnalyzer:
-    """Analyze sentiment in professor reviews"""
+    """Analyze sentiment in professor reviews using Gemini AI"""
     
     def __init__(self):
-        self.model_name = settings.sentiment_model_name
-        self.pipeline = None
-        self._load_model()
-        logger.info(f"Sentiment analyzer initialized with model: {self.model_name}")
+        genai.configure(api_key=settings.gemini_api_key)
+        self.model = genai.GenerativeModel('gemini-2.5-flash')
+        logger.info("Sentiment analyzer initialized with Gemini API")
     
-    def _load_model(self):
-        """Load the sentiment analysis model"""
-        try:
-            self.pipeline = pipeline(
-                "sentiment-analysis",
-                model=self.model_name,
-                device=0 if torch.cuda.is_available() else -1
-            )
-            logger.info("Sentiment model loaded successfully")
-        except Exception as e:
-            logger.error(f"Error loading sentiment model: {e}")
-            raise
-    
-    def analyze_review(self, review_text: str) -> Dict[str, float]:
+    def analyze_review(self, review_text: str) -> Dict[str, Union[str, float]]:
         """
-        Analyze a single review for sentiment
+        Analyze a single review for sentiment using Gemini
         Returns scores for different aspects
         """
-        if not review_text or not self.pipeline:
+        if not review_text:
             return {}
         
         try:
-            # Overall sentiment
-            result = self.pipeline(review_text[:512])[0]  # Truncate to model limit
+            prompt = f"""Analyze this professor review and return ONLY a JSON object with sentiment scores (0-100):
+
+Review: "{review_text}"
+
+Return this exact format:
+{{
+    "overall_sentiment": "POSITIVE/NEGATIVE/NEUTRAL",
+    "overall_score": 0-100,
+    "teaching_clarity": 0-100,
+    "grading_fairness": 0-100,
+    "engagement": 0-100,
+    "accessibility": 0-100,
+    "class_difficulty": 0-100
+}}
+
+Rules:
+- Higher scores (70-100) = positive sentiment
+- Medium scores (40-70) = neutral
+- Lower scores (0-40) = negative sentiment
+- teaching_clarity: How clear are their explanations
+- grading_fairness: How fair is their grading
+- engagement: How engaging is the class
+- accessibility: How available/helpful is the professor
+- class_difficulty: How challenging is the class (higher = harder)"""
+
+            response = self.model.generate_content(prompt)
             
-            # Extract aspect-based sentiments using keyword matching
-            aspects = self._extract_aspect_sentiments(review_text)
+            # Parse JSON from response
+            result_text = response.text.strip()
+            # Remove markdown code blocks if present
+            if result_text.startswith('```'):
+                result_text = result_text.split('```')[1]
+                if result_text.startswith('json'):
+                    result_text = result_text[4:]
+                result_text = result_text.strip()
             
-            return {
-                'overall_sentiment': result['label'],
-                'overall_score': result['score'],
-                **aspects
+            result = json.loads(result_text)
+            
+            # Normalize scores to 0-1 range
+            normalized = {
+                'overall_sentiment': result.get('overall_sentiment', 'NEUTRAL'),
+                'overall_score': result.get('overall_score', 50) / 100,
+                'teaching_clarity': result.get('teaching_clarity', 50) / 100,
+                'grading_fairness': result.get('grading_fairness', 50) / 100,
+                'engagement': result.get('engagement', 50) / 100,
+                'accessibility': result.get('accessibility', 50) / 100,
+                'class_difficulty': result.get('class_difficulty', 50) / 100
             }
+            
+            return normalized
         
         except Exception as e:
-            logger.error(f"Error analyzing review: {e}")
-            return {}
+            logger.error(f"Error analyzing review with Gemini: {e}")
+            # Fallback to neutral scores
+            return {
+                'overall_sentiment': 'NEUTRAL',
+                'overall_score': 0.5,
+                'teaching_clarity': 0.5,
+                'grading_fairness': 0.5,
+                'engagement': 0.5,
+                'accessibility': 0.5,
+                'class_difficulty': 0.5
+            }
     
-    def _extract_aspect_sentiments(self, text: str) -> Dict[str, float]:
+    def analyze_reviews_batch(self, reviews: List[str], batch_size: int = 5) -> List[Dict[str, Union[str, float]]]:
         """
-        Extract sentiment for specific aspects using keyword-based approach
-        Aspects: teaching_clarity, grading_fairness, engagement, accessibility, class_difficulty
+        Analyze multiple reviews in batch using Gemini
+        Processes in batches to avoid rate limits
         """
-        text_lower = text.lower()
-        aspects = {}
+        if not reviews:
+            return []
         
-        # Teaching clarity keywords
-        clarity_keywords = ['clear', 'explain', 'understand', 'confusing', 'organized']
-        aspects['teaching_clarity'] = self._score_aspect(text_lower, clarity_keywords)
+        results = []
         
-        # Grading fairness keywords
-        grading_keywords = ['fair', 'grade', 'exam', 'test', 'harsh', 'easy grader']
-        aspects['grading_fairness'] = self._score_aspect(text_lower, grading_keywords)
-        
-        # Engagement keywords
-        engagement_keywords = ['engaging', 'interesting', 'boring', 'passionate', 'enthusiastic']
-        aspects['engagement'] = self._score_aspect(text_lower, engagement_keywords)
-        
-        # Accessibility keywords
-        accessibility_keywords = ['helpful', 'available', 'office hours', 'responsive', 'approachable']
-        aspects['accessibility'] = self._score_aspect(text_lower, accessibility_keywords)
-        
-        # Class difficulty keywords
-        difficulty_keywords = ['difficult', 'hard', 'easy', 'challenging', 'workload']
-        aspects['class_difficulty'] = self._score_aspect(text_lower, difficulty_keywords)
-        
-        return aspects
-    
-    def _score_aspect(self, text: str, keywords: List[str]) -> float:
-        """
-        Score an aspect based on keyword presence
-        Returns a score from 0 to 1
-        """
-        positive_words = ['good', 'great', 'excellent', 'amazing', 'helpful', 'clear', 'fair']
-        negative_words = ['bad', 'terrible', 'awful', 'poor', 'confusing', 'unfair', 'harsh']
-        
-        score = 0.5  # Neutral default
-        
-        for keyword in keywords:
-            if keyword in text:
-                # Check surrounding context for sentiment
-                keyword_index = text.find(keyword)
-                context = text[max(0, keyword_index-50):min(len(text), keyword_index+50)]
+        # Process in batches
+        for i in range(0, len(reviews), batch_size):
+            batch = reviews[i:i+batch_size]
+            
+            try:
+                # Create a batch prompt
+                reviews_text = "\n\n".join([f"Review {j+1}: {r}" for j, r in enumerate(batch)])
                 
-                # Simple sentiment scoring
-                if any(pos in context for pos in positive_words):
-                    score += 0.1
-                elif any(neg in context for neg in negative_words):
-                    score -= 0.1
+                prompt = f"""Analyze these {len(batch)} professor reviews and return ONLY a JSON array with sentiment scores:
+
+{reviews_text}
+
+Return this exact format:
+[
+    {{
+        "overall_sentiment": "POSITIVE/NEGATIVE/NEUTRAL",
+        "overall_score": 0-100,
+        "teaching_clarity": 0-100,
+        "grading_fairness": 0-100,
+        "engagement": 0-100,
+        "accessibility": 0-100,
+        "class_difficulty": 0-100
+    }},
+    ... (one object per review)
+]"""
+
+                response = self.model.generate_content(prompt)
+                
+                # Parse JSON array
+                result_text = response.text.strip()
+                if result_text.startswith('```'):
+                    result_text = result_text.split('```')[1]
+                    if result_text.startswith('json'):
+                        result_text = result_text[4:]
+                    result_text = result_text.strip()
+                
+                batch_results = json.loads(result_text)
+                
+                # Normalize scores
+                for result in batch_results:
+                    normalized = {
+                        'overall_sentiment': result.get('overall_sentiment', 'NEUTRAL'),
+                        'overall_score': result.get('overall_score', 50) / 100,
+                        'teaching_clarity': result.get('teaching_clarity', 50) / 100,
+                        'grading_fairness': result.get('grading_fairness', 50) / 100,
+                        'engagement': result.get('engagement', 50) / 100,
+                        'accessibility': result.get('accessibility', 50) / 100,
+                        'class_difficulty': result.get('class_difficulty', 50) / 100
+                    }
+                    results.append(normalized)
+            
+            except Exception as e:
+                logger.error(f"Error in batch analysis: {e}")
+                # Add neutral scores for failed batch
+                for _ in batch:
+                    results.append({
+                        'overall_sentiment': 'NEUTRAL',
+                        'overall_score': 0.5,
+                        'teaching_clarity': 0.5,
+                        'grading_fairness': 0.5,
+                        'engagement': 0.5,
+                        'accessibility': 0.5,
+                        'class_difficulty': 0.5
+                    })
         
-        return max(0.0, min(1.0, score))  # Clamp to [0, 1]
-    
-    def analyze_reviews_batch(self, reviews: List[str]) -> List[Dict[str, float]]:
-        """Analyze multiple reviews in batch"""
-        return [self.analyze_review(review) for review in reviews]
+        return results
     
     def generate_professor_metrics(
         self,
-        reviews: List[Dict[str, any]]
+        reviews: List[Dict[str, Any]]
     ) -> Dict[str, float]:
         """
         Generate aggregate metrics from analyzed reviews
@@ -143,9 +196,9 @@ class SentimentAnalyzer:
         metrics = {}
         
         for aspect in aspects:
-            scores = [s.get(aspect, 0) for s in sentiments if aspect in s]
+            scores = [s.get(aspect, 0.5) for s in sentiments if aspect in s]
             if scores:
-                metrics[f'{aspect}_score'] = sum(scores) / len(scores) * 100  # Convert to 0-100
+                metrics[f'{aspect}_score'] = (sum(scores) / len(scores)) * 100  # Convert to 0-100
         
         return metrics
     

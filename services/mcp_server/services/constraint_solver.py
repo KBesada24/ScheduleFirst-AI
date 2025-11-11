@@ -66,7 +66,7 @@ class ScheduleOptimizer:
         # Filter and score schedules
         valid_schedules = []
         
-        for schedule_sections in possible_schedules:
+        for schedule_sections, course_id_to_code in possible_schedules:
             # Check constraints
             conflicts = self.detect_conflicts(schedule_sections)
             
@@ -76,7 +76,8 @@ class ScheduleOptimizer:
                 schedule = await self._create_scored_schedule(
                     schedule_sections,
                     conflicts,
-                    constraints
+                    constraints,
+                    course_id_to_code
                 )
                 valid_schedules.append(schedule)
         
@@ -93,21 +94,29 @@ class ScheduleOptimizer:
     def _generate_combinations(
         self,
         sections_by_course: Dict[str, Dict]
-    ) -> List[List[CourseSection]]:
-        """Generate all possible combinations of sections"""
+    ) -> List[Tuple[List[CourseSection], Dict[UUID, str]]]:
+        """Generate all possible combinations of sections with course code mapping"""
         courses = list(sections_by_course.keys())
         section_lists = [sections_by_course[c]['sections'] for c in courses]
         
-        # Generate cartesian product of all section combinations
-        combinations = list(itertools.product(*section_lists))
+        # Create mapping of course_id to course_code
+        course_id_to_code = {}
+        for course_code, data in sections_by_course.items():
+            course_id_to_code[data['course'].id] = course_code
+        
+        # Generate all combinations
+        combinations = []
+        for combination in itertools.product(*section_lists):
+            combinations.append((list(combination), course_id_to_code))
         
         return combinations
-    
+        
     async def _create_scored_schedule(
         self,
         sections: List[CourseSection],
         conflicts: List[ScheduleConflict],
-        constraints: ScheduleConstraints
+        constraints: ScheduleConstraints,
+        course_id_to_code: Dict[UUID, str]
     ) -> OptimizedSchedule:
         """Create a scored schedule from sections"""
         slots = []
@@ -115,13 +124,14 @@ class ScheduleOptimizer:
         professor_ratings = []
         
         for section in sections:
-            # Get course info
+            # Get course info using the course_code from mapping
+            course_code = course_id_to_code.get(section.course_id)
             course = await self.db.get_course_by_code(
-                section.course_id,  # This would need course_code
+                course_code,
                 constraints.required_course_codes[0],  # Semester from first course
                 ""  # University
-            )
-            
+            ) if course_code else None
+                        
             slot = ScheduleSlot(
                 section=section,
                 course_code=course.course_code if course else "",
@@ -161,7 +171,9 @@ class ScheduleOptimizer:
             preference_score=preference_score,
             professor_quality_score=professor_quality_score,
             time_convenience_score=time_convenience_score,
-            overall_score=overall_score
+            overall_score=overall_score,
+            rank=0,
+            notes=None
         )
     
     def detect_conflicts(self, sections: List[CourseSection]) -> List[ScheduleConflict]:
@@ -201,13 +213,16 @@ class ScheduleOptimizer:
             return False
         
         # Check if they share any days
-        days1 = set(section1.days.replace('Th', 'R'))  # Normalize Thursday
-        days2 = set(section2.days.replace('Th', 'R'))
+        days1 = set(section1.days.replace('Th', 'R') if section1.days else '')  # Normalize Thursday
+        days2 = set(section2.days.replace('Th', 'R') if section2.days else '')
         
         if not days1.intersection(days2):
             return False
         
         # Check time overlap
+        # Type narrowing: we already checked these are not None above
+        assert section1.start_time is not None and section1.end_time is not None
+        assert section2.start_time is not None and section2.end_time is not None
         return (section1.start_time < section2.end_time and 
                 section1.end_time > section2.start_time)
     
@@ -215,6 +230,9 @@ class ScheduleOptimizer:
         """Check if there's insufficient travel time between sections"""
         if not all([section1.end_time, section2.start_time, section1.location, section2.location]):
             return False
+        
+        # Type narrowing: we already checked these are not None above
+        assert section1.end_time is not None and section2.start_time is not None
         
         # If different campuses, check if there's at least 30 minutes between classes
         if section1.location != section2.location:

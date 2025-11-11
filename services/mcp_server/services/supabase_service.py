@@ -2,7 +2,7 @@
 Supabase database service for CUNY Schedule Optimizer
 Handles all database operations via Supabase client
 """
-from typing import List, Optional, Dict, Any
+from typing import List, Optional, Dict, Any, cast
 from uuid import UUID
 from datetime import datetime
 
@@ -40,7 +40,8 @@ class SupabaseService:
                 query = query.eq("university", university)
             
             response = query.execute()
-            return [Course(**course) for course in response.data]
+            courses = cast(List[Dict[str, Any]], response.data)
+            return [Course(**course) for course in courses]
         
         except APIError as e:
             logger.error(f"Error fetching courses: {e}")
@@ -54,7 +55,9 @@ class SupabaseService:
             ).eq("semester", semester).eq("university", university).execute()
             
             if response.data:
-                return Course(**response.data[0])
+                # Type hint to help Pylance understand the structure
+                course_data = cast(Dict[str, Any], response.data[0])
+                return Course(**course_data)
             return None
         
         except APIError as e:
@@ -70,7 +73,8 @@ class SupabaseService:
             
             if response.data:
                 logger.info(f"Inserted course: {course.course_code}")
-                return Course(**response.data[0])
+                course_data = cast(Dict[str, Any], response.data[0])
+                return Course(**course_data)
             return None
         
         except APIError as e:
@@ -117,7 +121,8 @@ class SupabaseService:
                 query = query.lte("credits", filters.max_credits)
             
             response = query.execute()
-            return [Course(**course) for course in response.data]
+            courses_data = cast(List[Dict[str, Any]], response.data)
+            return [Course(**course) for course in courses_data]
         
         except APIError as e:
             logger.error(f"Error searching courses: {e}")
@@ -132,7 +137,8 @@ class SupabaseService:
                 "course_id", str(course_id)
             ).execute()
             
-            return [CourseSection(**section) for section in response.data]
+            sections_data = cast(List[Dict[str, Any]], response.data)
+            return [CourseSection(**section) for section in sections_data]
         
         except APIError as e:
             logger.error(f"Error fetching sections for course {course_id}: {e}")
@@ -147,7 +153,8 @@ class SupabaseService:
             response = self.client.table("course_sections").insert(data).execute()
             
             if response.data:
-                return CourseSection(**response.data[0])
+                section_data = cast(Dict[str, Any], response.data[0])
+                return CourseSection(**section_data)
             return None
         
         except APIError as e:
@@ -177,7 +184,8 @@ class SupabaseService:
                 "*"
             ).ilike("professor_name", f"%{professor_name}%").execute()
             
-            return [CourseSection(**section) for section in response.data]
+            sections_data = cast(List[Dict[str, Any]], response.data)
+            return [CourseSection(**section) for section in sections_data]
         
         except APIError as e:
             logger.error(f"Error fetching sections for professor {professor_name}: {e}")
@@ -193,7 +201,8 @@ class SupabaseService:
             ).eq("university", university).execute()
             
             if response.data:
-                return Professor(**response.data[0])
+                prof_data = cast(Dict[str, Any], response.data[0])
+                return Professor(**prof_data)
             return None
         
         except APIError as e:
@@ -208,7 +217,8 @@ class SupabaseService:
             ).execute()
             
             if response.data:
-                return Professor(**response.data[0])
+                prof_data = cast(Dict[str, Any], response.data[0])
+                return Professor(**prof_data)
             return None
         
         except APIError as e:
@@ -224,7 +234,8 @@ class SupabaseService:
             
             if response.data:
                 logger.info(f"Inserted professor: {professor.name}")
-                return Professor(**response.data[0])
+                prof_data = cast(Dict[str, Any], response.data[0])
+                return Professor(**prof_data)
             return None
         
         except APIError as e:
@@ -265,7 +276,8 @@ class SupabaseService:
                 "university", university
             ).execute()
             
-            return [Professor(**prof) for prof in response.data]
+            profs_data = cast(List[Dict[str, Any]], response.data)
+            return [Professor(**prof) for prof in profs_data]
         
         except APIError as e:
             logger.error(f"Error fetching professors for {university}: {e}")
@@ -280,7 +292,8 @@ class SupabaseService:
                 "professor_id", str(professor_id)
             ).execute()
             
-            return [ProfessorReview(**review) for review in response.data]
+            reviews_data = cast(List[Dict[str, Any]], response.data)
+            return [ProfessorReview(**review) for review in reviews_data]
         
         except APIError as e:
             logger.error(f"Error fetching reviews for professor {professor_id}: {e}")
@@ -295,7 +308,8 @@ class SupabaseService:
             response = self.client.table("professor_reviews").insert(data).execute()
             
             if response.data:
-                return ProfessorReview(**response.data[0])
+                review_data = cast(Dict[str, Any], response.data[0])
+                return ProfessorReview(**review_data)
             return None
         
         except APIError as e:
@@ -324,7 +338,8 @@ class SupabaseService:
                 "user_id", str(user_id)
             ).execute()
             
-            return [UserSchedule(**schedule) for schedule in response.data]
+            schedules_data = cast(List[Dict[str, Any]], response.data)
+            return [UserSchedule(**schedule) for schedule in schedules_data]
         
         except APIError as e:
             logger.error(f"Error fetching schedules for user {user_id}: {e}")
@@ -340,7 +355,8 @@ class SupabaseService:
             response = self.client.table("user_schedules").insert(data).execute()
             
             if response.data:
-                return UserSchedule(**response.data[0])
+                schedule_data = cast(Dict[str, Any], response.data[0])
+                return UserSchedule(**schedule_data)
             return None
         
         except APIError as e:
