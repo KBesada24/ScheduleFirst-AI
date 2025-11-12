@@ -1,18 +1,13 @@
-import React from "react";
-import ReactDOM from "react-dom/client";
-import App from "./App.tsx";
-import "./index.css";
+import { createRoot } from "react-dom/client";
 import { BrowserRouter } from "react-router-dom";
+import "./index.css";
+import App from "./App.tsx";
+import { AuthProvider } from "../supabase/auth.tsx";
 
-/* import { TempoDevtools } from 'tempo-devtools'; [deprecated] */
-/* TempoDevtools.init() [deprecated] */;
-
-const basename = import.meta.env.BASE_URL;
-
-ReactDOM.createRoot(document.getElementById("root")!).render(
-  <React.StrictMode>
-    <BrowserRouter basename={basename}>
+createRoot(document.getElementById("root")!).render(
+  <BrowserRouter>
+    <AuthProvider>
       <App />
-    </BrowserRouter>
-  </React.StrictMode>,
+    </AuthProvider>
+  </BrowserRouter>
 );

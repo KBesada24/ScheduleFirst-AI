@@ -24,14 +24,14 @@ export default function LandingPage() {
         <div className="max-w-[980px] mx-auto flex h-12 items-center justify-between px-4">
           <div className="flex items-center">
             <Link to="/" className="font-medium text-xl">
-              Tempo Starter Kit
+              ScheduleFirst AI
             </Link>
           </div>
           <div className="flex items-center space-x-4">
             {user ? (
               <div className="flex items-center gap-4">
-                <Link to="/dashboard">
-                  <Button variant="ghost" className="text-sm font-light hover:text-gray-500">Dashboard</Button>
+                <Link to="/schedule-builder">
+                  <Button variant="ghost" className="text-sm font-light hover:text-gray-500">Schedule Builder</Button>
                 </Link>
                 <DropdownMenu>
                   <DropdownMenuTrigger asChild>
@@ -80,8 +80,9 @@ export default function LandingPage() {
       <main className="pt-12">
         {/* Hero section */}
         <section className="py-20 text-center">
-          <h2 className="text-5xl font-semibold tracking-tight mb-1">Tempo Starter Kit</h2>
-          <h3 className="text-2xl font-medium text-gray-500 mb-4">A modern full-stack starter kit with React & Supabase.</h3>
+          <h2 className="text-5xl font-semibold tracking-tight mb-1">ScheduleFirst AI</h2>
+          <p className="text-gray-500">***This works for ONLY CUNY Undergraduate students, does not work for any other schools***</p>
+          <h3 className="text-2xl font-medium text-black mb-4">Finding Classes, Just for you</h3>
           <div className="flex justify-center space-x-6 text-xl text-blue-600">
             <Link to="/" className="flex items-center hover:underline">Learn more <ChevronRight className="h-4 w-4" /></Link>
             <Link to="/signup" className="flex items-center hover:underline">Get started <ChevronRight className="h-4 w-4" /></Link>
@@ -91,8 +92,8 @@ export default function LandingPage() {
 
         {/* Features section */}
         <section className="py-20 bg-[#f5f5f7] text-center">
-          <h2 className="text-5xl font-semibold tracking-tight mb-1">Powerful Features</h2>
-          <h3 className="text-2xl font-medium text-gray-500 mb-4">Everything you need to build modern web applications</h3>
+          <h2 className="text-5xl font-semibold tracking-tight mb-1">Let AI build your perfect schedule — smarter, faster, stress-free</h2>
+          <h3 className="text-2xl font-medium text-gray-500 mb-4">Everything you need to find the class thats right for you</h3>
           <div className="flex justify-center space-x-6 text-xl text-blue-600">
             <Link to="/" className="flex items-center hover:underline">Explore features <ChevronRight className="h-4 w-4" /></Link>
             <Link to="/" className="flex items-center hover:underline">View documentation <ChevronRight className="h-4 w-4" /></Link>
@@ -104,8 +105,8 @@ export default function LandingPage() {
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 10V3L4 14h7v7l9-11h-7z" />
                 </svg>
               </div>
-              <h4 className="text-xl font-medium mb-2">Lightning Fast</h4>
-              <p className="text-gray-500">Built with performance in mind for the best developer and user experience.</p>
+              <h4 className="text-xl font-medium mb-2">Way Smarter</h4>
+              <p className="text-gray-500">Built with Students in mind, find the the right class for you, whether its professor, time, or both.</p>
             </div>
             <div className="bg-white p-8 rounded-2xl shadow-sm text-left">
               <div className="h-12 w-12 bg-purple-100 rounded-full flex items-center justify-center mb-4">
@@ -113,8 +114,8 @@ export default function LandingPage() {
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 5a1 1 0 011-1h14a1 1 0 011 1v2a1 1 0 01-1 1H5a1 1 0 01-1-1V5zM4 13a1 1 0 011-1h6a1 1 0 011 1v6a1 1 0 01-1 1H5a1 1 0 01-1-1v-6zM16 13a1 1 0 011-1h2a1 1 0 011 1v6a1 1 0 01-1 1h-2a1 1 0 01-1-1v-6z" />
                 </svg>
               </div>
-              <h4 className="text-xl font-medium mb-2">Modern Stack</h4>
-              <p className="text-gray-500">Uses React, Supabase, and other modern tools to build robust applications.</p>
+              <h4 className="text-xl font-medium mb-2">Smart Scheduler</h4>
+              <p className="text-gray-500">Powered by AI and MCP-driven optimization, ScheduleFirst intelligently balances professor preferences, time constraints, and course requirements to find your schedule.</p>
             </div>
             <div className="bg-white p-8 rounded-2xl shadow-sm text-left">
               <div className="h-12 w-12 bg-green-100 rounded-full flex items-center justify-center mb-4">
@@ -123,7 +124,9 @@ export default function LandingPage() {
                 </svg>
               </div>
               <h4 className="text-xl font-medium mb-2">Beautiful UI</h4>
-              <p className="text-gray-500">Comes with a set of beautiful, responsive components ready to use.</p>
+              <p className="text-gray-500">
+                Clean, minimal UI surfaces schedules quickly with intuitive calendar-style view.
+              </p>
             </div>
           </div>
         </section>
@@ -172,53 +175,6 @@ export default function LandingPage() {
           </div>
         </section>
       </main>
-
-      {/* Footer */}
-      <footer className="bg-[#f5f5f7] py-12 text-xs text-gray-500">
-        <div className="max-w-[980px] mx-auto px-4">
-          <div className="border-b border-gray-300 pb-8 grid grid-cols-1 md:grid-cols-4 gap-8">
-            <div>
-              <h4 className="font-medium text-sm text-gray-900 mb-4">Tempo Starter Kit</h4>
-              <ul className="space-y-2">
-                <li><Link to="/" className="hover:underline">Features</Link></li>
-                <li><Link to="/" className="hover:underline">Documentation</Link></li>
-                <li><Link to="/" className="hover:underline">Components</Link></li>
-                <li><Link to="/" className="hover:underline">Examples</Link></li>
-              </ul>
-            </div>
-            <div>
-              <h4 className="font-medium text-sm text-gray-900 mb-4">Resources</h4>
-              <ul className="space-y-2">
-                <li><Link to="/" className="hover:underline">Getting Started</Link></li>
-                <li><Link to="/" className="hover:underline">API Reference</Link></li>
-                <li><Link to="/" className="hover:underline">Tutorials</Link></li>
-                <li><Link to="/" className="hover:underline">Blog</Link></li>
-              </ul>
-            </div>
-            <div>
-              <h4 className="font-medium text-sm text-gray-900 mb-4">Community</h4>
-              <ul className="space-y-2">
-                <li><Link to="/" className="hover:underline">GitHub</Link></li>
-                <li><Link to="/" className="hover:underline">Discord</Link></li>
-                <li><Link to="/" className="hover:underline">Twitter</Link></li>
-                <li><Link to="/" className="hover:underline">YouTube</Link></li>
-              </ul>
-            </div>
-            <div>
-              <h4 className="font-medium text-sm text-gray-900 mb-4">Legal</h4>
-              <ul className="space-y-2">
-                <li><Link to="/" className="hover:underline">Privacy</Link></li>
-                <li><Link to="/" className="hover:underline">Terms</Link></li>
-                <li><Link to="/" className="hover:underline">Cookie Policy</Link></li>
-                <li><Link to="/" className="hover:underline">Licenses</Link></li>
-              </ul>
-            </div>
-          </div>
-          <div className="py-4">
-            <p>Copyright © 2025 Tempo Labs. All rights reserved.</p>
-          </div>
-        </div>
-      </footer>
     </div>
   );
 }
