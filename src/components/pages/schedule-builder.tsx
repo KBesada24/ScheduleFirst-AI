@@ -1,12 +1,22 @@
-import { useState } from "react";
+import { useState, useRef, useEffect } from "react";
 import CourseSearch from "@/components/schedule/CourseSearch";
 import CourseCard from "@/components/schedule/CourseCard";
 import ProfessorCard from "@/components/schedule/ProfessorCard";
 import ScheduleGrid from "@/components/schedule/ScheduleGrid";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Button } from "@/components/ui/button";
-import { Calendar, BookOpen, GraduationCap, Sparkles } from "lucide-react";
+import { Input } from "@/components/ui/input";
+import { Card, CardContent } from "@/components/ui/card";
+import { Calendar, BookOpen, GraduationCap, Sparkles, MessageSquare, Send } from "lucide-react";
 import { useCourseSearch, useProfessorSearch } from "@/lib/supabase-hooks";
+
+type Message = {
+  id: string;
+  role: "user" | "assistant";
+  content: string;
+  timestamp: Date;
+  suggestedSchedule?: any;
+};
 
 export default function ScheduleBuilder() {
   const [activeTab, setActiveTab] = useState("search");
@@ -16,6 +26,17 @@ export default function ScheduleBuilder() {
     modality: "all",
     timeSlot: "all",
   });
+  const [chatMessages, setChatMessages] = useState<Message[]>([
+    {
+      id: "1",
+      role: "assistant",
+      content: "Hi! I'm your AI scheduling assistant. I can help you build an optimal schedule based on your preferences. What courses are you interested in taking this semester?",
+      timestamp: new Date(),
+    },
+  ]);
+  const [chatInput, setChatInput] = useState("");
+  const [isAiThinking, setIsAiThinking] = useState(false);
+  const chatEndRef = useRef<HTMLDivElement>(null);
 
   // Fetch courses based on search
   const { courses, loading: coursesLoading } = useCourseSearch({
@@ -35,6 +56,48 @@ export default function ScheduleBuilder() {
     setFilters(newFilters);
   };
 
+  const scrollToBottom = () => {
+    chatEndRef.current?.scrollIntoView({ behavior: "smooth" });
+  };
+
+  useEffect(() => {
+    scrollToBottom();
+  }, [chatMessages]);
+
+  const handleSendMessage = async () => {
+    if (!chatInput.trim()) return;
+
+    const userMessage: Message = {
+      id: Date.now().toString(),
+      role: "user",
+      content: chatInput,
+      timestamp: new Date(),
+    };
+
+    setChatMessages((prev) => [...prev, userMessage]);
+    setChatInput("");
+    setIsAiThinking(true);
+
+    // Simulate AI response (replace with actual API call)
+    setTimeout(() => {
+      const aiMessage: Message = {
+        id: (Date.now() + 1).toString(),
+        role: "assistant",
+        content: "Based on your interests, I recommend the following schedule:\n\n• CSC 101 - Introduction to Computer Science (MWF 10:00-11:00)\n• MAT 201 - Calculus I (TTh 1:00-2:30)\n• ENG 102 - English Composition (MW 2:00-3:30)\n\nThis schedule has no conflicts and balances your workload throughout the week. The professors for these sections have high ratings. Would you like me to add these courses to your schedule?",
+        timestamp: new Date(),
+        suggestedSchedule: {
+          courses: [
+            { code: "CSC 101", days: "MWF", time: "10:00-11:00" },
+            { code: "MAT 201", days: "TTh", time: "1:00-2:30" },
+            { code: "ENG 102", days: "MW", time: "2:00-3:30" },
+          ],
+        },
+      };
+      setChatMessages((prev) => [...prev, aiMessage]);
+      setIsAiThinking(false);
+    }, 1500);
+  };
+
   return (
     <div className="min-h-screen bg-gradient-to-br from-blue-50 via-white to-purple-50 p-6">
       <div className="max-w-7xl mx-auto space-y-6">
@@ -51,7 +114,7 @@ export default function ScheduleBuilder() {
 
         {/* Main Tabs */}
         <Tabs value={activeTab} onValueChange={setActiveTab} className="w-full">
-          <TabsList className="grid w-full grid-cols-3 max-w-2xl mx-auto">
+          <TabsList className="grid w-full grid-cols-4 max-w-3xl mx-auto">
             <TabsTrigger value="search" className="flex items-center gap-2">
               <BookOpen className="h-4 w-4" />
               Course Search
@@ -59,6 +122,10 @@ export default function ScheduleBuilder() {
             <TabsTrigger value="schedule" className="flex items-center gap-2">
               <Calendar className="h-4 w-4" />
               My Schedule
+            </TabsTrigger>
+            <TabsTrigger value="ai-chat" className="flex items-center gap-2">
+              <MessageSquare className="h-4 w-4" />
+              AI Assistant
             </TabsTrigger>
             <TabsTrigger value="professors" className="flex items-center gap-2">
               <GraduationCap className="h-4 w-4" />
@@ -150,6 +217,203 @@ export default function ScheduleBuilder() {
                     Your schedule looks great! All classes fit without overlaps.
                   </p>
                 </div>
+              </div>
+            </div>
+          </TabsContent>
+
+          {/* AI Chat Tab */}
+          <TabsContent value="ai-chat" className="mt-6">
+            <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+              {/* Chat Section */}
+              <Card className="flex flex-col h-[600px]">
+                <CardContent className="flex flex-col h-full p-0">
+                  <div className="border-b p-4 bg-gradient-to-r from-blue-600 to-purple-600">
+                    <h3 className="font-semibold text-white flex items-center gap-2">
+                      <Sparkles className="h-5 w-5" />
+                      AI Scheduling Assistant
+                    </h3>
+                    <p className="text-sm text-blue-100 mt-1">
+                      Ask me anything about courses, schedules, or professors
+                    </p>
+                  </div>
+
+                  {/* Messages */}
+                  <div className="flex-1 overflow-y-auto p-4 space-y-4">
+                    {chatMessages.map((message) => (
+                      <div
+                        key={message.id}
+                        className={`flex ${message.role === "user" ? "justify-end" : "justify-start"}`}
+                      >
+                        <div
+                          className={`max-w-[80%] rounded-lg p-3 ${
+                            message.role === "user"
+                              ? "bg-blue-600 text-white"
+                              : "bg-gray-100 text-gray-900"
+                          }`}
+                        >
+                          <p className="text-sm whitespace-pre-wrap">{message.content}</p>
+                          <p
+                            className={`text-xs mt-1 ${
+                              message.role === "user" ? "text-blue-100" : "text-gray-500"
+                            }`}
+                          >
+                            {message.timestamp.toLocaleTimeString([], {
+                              hour: "2-digit",
+                              minute: "2-digit",
+                            })}
+                          </p>
+                        </div>
+                      </div>
+                    ))}
+
+                    {isAiThinking && (
+                      <div className="flex justify-start">
+                        <div className="bg-gray-100 rounded-lg p-3">
+                          <div className="flex gap-1">
+                            <div className="w-2 h-2 bg-gray-400 rounded-full animate-bounce" />
+                            <div className="w-2 h-2 bg-gray-400 rounded-full animate-bounce [animation-delay:0.2s]" />
+                            <div className="w-2 h-2 bg-gray-400 rounded-full animate-bounce [animation-delay:0.4s]" />
+                          </div>
+                        </div>
+                      </div>
+                    )}
+                    <div ref={chatEndRef} />
+                  </div>
+
+                  {/* Input */}
+                  <div className="border-t p-4">
+                    <div className="flex gap-2">
+                      <Input
+                        value={chatInput}
+                        onChange={(e) => setChatInput(e.target.value)}
+                        onKeyPress={(e) => e.key === "Enter" && handleSendMessage()}
+                        placeholder="Ask about courses, schedules, or professors..."
+                        className="flex-1"
+                        disabled={isAiThinking}
+                      />
+                      <Button
+                        onClick={handleSendMessage}
+                        disabled={isAiThinking || !chatInput.trim()}
+                        className="bg-blue-600 hover:bg-blue-700"
+                      >
+                        <Send className="h-4 w-4" />
+                      </Button>
+                    </div>
+                  </div>
+                </CardContent>
+              </Card>
+
+              {/* Schedule Preview */}
+              <div className="space-y-4">
+                <Card>
+                  <CardContent className="p-4">
+                    <div className="flex items-center justify-between mb-4">
+                      <h3 className="font-semibold text-gray-900">AI Suggested Schedule</h3>
+                      <Button size="sm" variant="outline">
+                        Apply to My Schedule
+                      </Button>
+                    </div>
+                    
+                    {/* Mini Calendar Grid */}
+                    <div className="bg-white border rounded-lg overflow-hidden">
+                      <div className="grid grid-cols-6 bg-gray-50 border-b">
+                        <div className="p-2 text-xs font-medium text-gray-600 border-r">Time</div>
+                        <div className="p-2 text-xs font-medium text-gray-600 text-center border-r">Mon</div>
+                        <div className="p-2 text-xs font-medium text-gray-600 text-center border-r">Tue</div>
+                        <div className="p-2 text-xs font-medium text-gray-600 text-center border-r">Wed</div>
+                        <div className="p-2 text-xs font-medium text-gray-600 text-center border-r">Thu</div>
+                        <div className="p-2 text-xs font-medium text-gray-600 text-center">Fri</div>
+                      </div>
+
+                      {/* Time slots */}
+                      {["9:00", "10:00", "11:00", "12:00", "1:00", "2:00", "3:00"].map((time) => (
+                        <div key={time} className="grid grid-cols-6 border-b last:border-b-0">
+                          <div className="p-2 text-xs text-gray-600 border-r bg-gray-50">{time}</div>
+                          <div className="p-2 border-r min-h-[60px]">
+                            {time === "10:00" && (
+                              <div className="bg-blue-100 border border-blue-300 rounded p-1 text-xs">
+                                <div className="font-medium text-blue-900">CSC 101</div>
+                                <div className="text-blue-700">10:00-11:00</div>
+                              </div>
+                            )}
+                          </div>
+                          <div className="p-2 border-r min-h-[60px]">
+                            {time === "1:00" && (
+                              <div className="bg-purple-100 border border-purple-300 rounded p-1 text-xs">
+                                <div className="font-medium text-purple-900">MAT 201</div>
+                                <div className="text-purple-700">1:00-2:30</div>
+                              </div>
+                            )}
+                          </div>
+                          <div className="p-2 border-r min-h-[60px]">
+                            {time === "10:00" && (
+                              <div className="bg-blue-100 border border-blue-300 rounded p-1 text-xs">
+                                <div className="font-medium text-blue-900">CSC 101</div>
+                                <div className="text-blue-700">10:00-11:00</div>
+                              </div>
+                            )}
+                            {time === "2:00" && (
+                              <div className="bg-green-100 border border-green-300 rounded p-1 text-xs">
+                                <div className="font-medium text-green-900">ENG 102</div>
+                                <div className="text-green-700">2:00-3:30</div>
+                              </div>
+                            )}
+                          </div>
+                          <div className="p-2 border-r min-h-[60px]">
+                            {time === "1:00" && (
+                              <div className="bg-purple-100 border border-purple-300 rounded p-1 text-xs">
+                                <div className="font-medium text-purple-900">MAT 201</div>
+                                <div className="text-purple-700">1:00-2:30</div>
+                              </div>
+                            )}
+                          </div>
+                          <div className="p-2 min-h-[60px]">
+                            {time === "10:00" && (
+                              <div className="bg-blue-100 border border-blue-300 rounded p-1 text-xs">
+                                <div className="font-medium text-blue-900">CSC 101</div>
+                                <div className="text-blue-700">10:00-11:00</div>
+                              </div>
+                            )}
+                            {time === "2:00" && (
+                              <div className="bg-green-100 border border-green-300 rounded p-1 text-xs">
+                                <div className="font-medium text-green-900">ENG 102</div>
+                                <div className="text-green-700">2:00-3:30</div>
+                              </div>
+                            )}
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+
+                    {/* Course Summary */}
+                    <div className="mt-4 space-y-2">
+                      <h4 className="text-sm font-medium text-gray-900">Recommended Courses</h4>
+                      <div className="space-y-2">
+                        <div className="flex items-center justify-between p-2 bg-blue-50 rounded">
+                          <div>
+                            <div className="text-sm font-medium text-blue-900">CSC 101</div>
+                            <div className="text-xs text-blue-700">MWF 10:00-11:00 • 3 credits</div>
+                          </div>
+                          <div className="text-xs font-medium text-blue-900">Grade: A</div>
+                        </div>
+                        <div className="flex items-center justify-between p-2 bg-purple-50 rounded">
+                          <div>
+                            <div className="text-sm font-medium text-purple-900">MAT 201</div>
+                            <div className="text-xs text-purple-700">TTh 1:00-2:30 • 4 credits</div>
+                          </div>
+                          <div className="text-xs font-medium text-purple-900">Grade: A-</div>
+                        </div>
+                        <div className="flex items-center justify-between p-2 bg-green-50 rounded">
+                          <div>
+                            <div className="text-sm font-medium text-green-900">ENG 102</div>
+                            <div className="text-xs text-green-700">MW 2:00-3:30 • 3 credits</div>
+                          </div>
+                          <div className="text-xs font-medium text-green-900">Grade: B+</div>
+                        </div>
+                      </div>
+                    </div>
+                  </CardContent>
+                </Card>
               </div>
             </div>
           </TabsContent>

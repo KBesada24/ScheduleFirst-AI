@@ -24,11 +24,11 @@ export default function SignUpForm() {
     try {
       await signUp(email, password, fullName);
       toast({
-        title: "Account created",
-        description: "Check your email to verify your account.",
+        title: "Account created successfully!",
+        description: "Welcome to ScheduleFirst AI. Let's build your schedule.",
         duration: 5000,
       });
-      navigate("/login");
+      navigate("/schedule-builder");
     } catch (err) {
       const msg = err instanceof Error ? err.message : "Error creating account";
       setError(msg);

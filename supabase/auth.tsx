@@ -52,7 +52,11 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       email,
       password,
     });
-    if (error) throw error;
+    if (error) {
+      console.error("Supabase auth error:", error);
+      throw error;
+    }
+    // Removed the return statement since the type is Promise<void>
   };
 
   const signOut = async () => {

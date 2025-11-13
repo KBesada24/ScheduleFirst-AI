@@ -15,11 +15,21 @@ export default function LoginForm() {
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    setError("");
+    
+    // Basic validation
+    if (!email || !password) {
+      setError("Please enter both email and password");
+      return;
+    }
+    
     try {
       await signIn(email, password);
-      navigate("/");
-    } catch (error) {
-      setError("Invalid email or password");
+      navigate("/schedule-builder");
+    } catch (err: any) {
+      console.error("Login error:", err);
+      const errorMessage = err?.message || "Invalid email or password";
+      setError(errorMessage);
     }
   };
 
