@@ -24,8 +24,8 @@ class Settings(BaseSettings):
     supabase_service_role_key: str = Field(..., alias="SUPABASE_SERVICE_ROLE_KEY")
     supabase_anon_key: str = Field(..., alias="SUPABASE_ANON_KEY")
     
-    # Database Configuration
-    database_url: str = Field(..., alias="DATABASE_URL")
+    # Database Configuration (Optional - only needed for direct PostgreSQL access)
+    database_url: Optional[str] = Field(default=None, alias="DATABASE_URL")
     db_pool_size: int = Field(default=20, alias="DB_POOL_SIZE")
     db_max_overflow: int = Field(default=10, alias="DB_MAX_OVERFLOW")
     
@@ -90,7 +90,7 @@ class Settings(BaseSettings):
     sentry_dsn: Optional[str] = Field(default=None, alias="SENTRY_DSN")
     
     model_config = SettingsConfigDict(
-        env_file=".env",
+        env_file=Path(__file__).parent.parent.parent / ".env",  # Points to root .env
         env_file_encoding="utf-8",
         case_sensitive=False,
         extra="ignore"
@@ -115,7 +115,15 @@ def get_settings() -> Settings:
     """Get or create settings singleton"""
     global _settings
     if _settings is None:
-        _settings = Settings()
+        try:
+            _settings = Settings()  # type: ignore
+        except Exception as e:
+            raise RuntimeError(
+                f"Failed to load settings. Please ensure your .env file exists in the project root "
+                f"and contains all required environment variables:\n"
+                f"GEMINI_API_KEY, SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, SUPABASE_ANON_KEY\n"
+                f"Error: {e}"
+            )
     return _settings
 
 
