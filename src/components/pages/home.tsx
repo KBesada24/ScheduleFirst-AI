@@ -1,5 +1,6 @@
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Button } from "@/components/ui/button";
+import { NavigationButton } from "@/components/ui/navigation-button";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -30,9 +31,14 @@ export default function LandingPage() {
           <div className="flex items-center space-x-4">
             {user ? (
               <div className="flex items-center gap-4">
-                <Link to="/schedule-builder">
-                  <Button variant="ghost" className="text-sm font-light hover:text-gray-500">Schedule Builder</Button>
-                </Link>
+                <NavigationButton 
+                  to="/schedule-builder" 
+                  variant="ghost" 
+                  className="text-sm font-light hover:text-gray-500"
+                  requiresAuth
+                >
+                  Schedule Builder
+                </NavigationButton>
                 <DropdownMenu>
                   <DropdownMenuTrigger asChild>
                     <Avatar className="h-8 w-8 hover:cursor-pointer">
@@ -65,12 +71,19 @@ export default function LandingPage() {
               </div>
             ) : (
               <>
-                <Link to="/login">
-                  <Button variant="ghost" className="text-sm font-light hover:text-gray-500">Sign In</Button>
-                </Link>
-                <Link to="/signup">
-                  <Button className="rounded-full bg-black text-white hover:bg-gray-800 text-sm px-4">Get Started</Button>
-                </Link>
+                <NavigationButton 
+                  to="/login" 
+                  variant="ghost" 
+                  className="text-sm font-light hover:text-gray-500"
+                >
+                  Sign In
+                </NavigationButton>
+                <NavigationButton 
+                  to="/signup" 
+                  className="rounded-full bg-black text-white hover:bg-gray-800 text-sm px-4"
+                >
+                  Get Started
+                </NavigationButton>
               </>
             )}
           </div>

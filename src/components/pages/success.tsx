@@ -1,5 +1,6 @@
 import { CheckCircle } from 'lucide-react'
 import { motion } from 'framer-motion'
+import { NavigationButton } from '@/components/ui/navigation-button'
 
 export default function Success() {
     return (
@@ -23,7 +24,7 @@ export default function Success() {
                     transition={{ delay: 0.4 }}
                     className="text-3xl font-bold text-gray-800 mb-4"
                 >
-                    Payment Successful!
+                    Welcome to ScheduleFirst AI!
                 </motion.h1>
                 <motion.p 
                     initial={{ opacity: 0 }}
@@ -31,19 +32,20 @@ export default function Success() {
                     transition={{ delay: 0.6 }}
                     className="text-gray-600 mb-6"
                 >
-                    Thank you for your purchase. You will receive a confirmation email shortly.
+                    Your account has been created successfully. Let's get started building your optimal schedule!
                 </motion.p>
                 <motion.div
                     initial={{ opacity: 0 }}
                     animate={{ opacity: 1 }}
                     transition={{ delay: 0.8 }}
                 >
-                    <a 
-                        href="/"
-                        className="inline-block bg-green-500 text-white px-6 py-3 rounded-lg font-semibold hover:bg-green-600 transition-colors duration-200"
+                    <NavigationButton 
+                        to="/dashboard"
+                        className="bg-green-500 text-white px-6 py-3 rounded-lg font-semibold hover:bg-green-600"
+                        requiresAuth
                     >
-                        Home
-                    </a>
+                        Go to Dashboard
+                    </NavigationButton>
                 </motion.div>
             </motion.div>
         </div>

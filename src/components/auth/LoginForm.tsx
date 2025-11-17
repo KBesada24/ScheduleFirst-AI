@@ -25,7 +25,15 @@ export default function LoginForm() {
     
     try {
       await signIn(email, password);
-      navigate("/schedule-builder");
+      
+      // Check for stored redirect URL
+      const redirectUrl = sessionStorage.getItem("redirectAfterLogin");
+      if (redirectUrl) {
+        sessionStorage.removeItem("redirectAfterLogin");
+        navigate(redirectUrl);
+      } else {
+        navigate("/dashboard");
+      }
     } catch (err: any) {
       console.error("Login error:", err);
       const errorMessage = err?.message || "Invalid email or password";
