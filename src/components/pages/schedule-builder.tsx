@@ -9,6 +9,7 @@ import { Input } from "@/components/ui/input";
 import { Card, CardContent } from "@/components/ui/card";
 import { Calendar, BookOpen, GraduationCap, Sparkles, MessageSquare, Send } from "lucide-react";
 import { useCourseSearch, useProfessorSearch } from "@/lib/supabase-hooks";
+import { useScheduleGrid } from "@/hooks/useScheduleGrid";
 
 type Message = {
   id: string;
@@ -37,6 +38,14 @@ export default function ScheduleBuilder() {
   const [chatInput, setChatInput] = useState("");
   const [isAiThinking, setIsAiThinking] = useState(false);
   const chatEndRef = useRef<HTMLDivElement>(null);
+
+  // Schedule grid management
+  const {
+    sections,
+    conflicts,
+    isUpdating,
+    updateFromAI,
+  } = useScheduleGrid();
 
   // Fetch courses based on search
   const { courses, loading: coursesLoading } = useCourseSearch({
@@ -79,21 +88,71 @@ export default function ScheduleBuilder() {
     setIsAiThinking(true);
 
     // Simulate AI response (replace with actual API call)
-    setTimeout(() => {
+    setTimeout(async () => {
+      // Simulated AI schedule response
+      const suggestedSchedule = {
+        sections: [
+          {
+            id: "sim-1",
+            course_id: "course-1",
+            section_number: "CSC 101",
+            professor_name: "Dr. Johnson",
+            days: "MWF",
+            start_time: "10:00",
+            end_time: "11:00",
+            location: "NAC 5/150",
+            modality: "In-person",
+            enrolled: 25,
+            capacity: 30,
+            scraped_at: new Date().toISOString(),
+            updated_at: new Date().toISOString(),
+          },
+          {
+            id: "sim-2",
+            course_id: "course-2",
+            section_number: "MAT 201",
+            professor_name: "Prof. Smith",
+            days: "TTh",
+            start_time: "13:00",
+            end_time: "14:30",
+            location: "NAC 6/113",
+            modality: "In-person",
+            enrolled: 28,
+            capacity: 35,
+            scraped_at: new Date().toISOString(),
+            updated_at: new Date().toISOString(),
+          },
+          {
+            id: "sim-3",
+            course_id: "course-3",
+            section_number: "ENG 102",
+            professor_name: "Dr. Williams",
+            days: "MW",
+            start_time: "14:00",
+            end_time: "15:30",
+            location: "NAC 7/201",
+            modality: "In-person",
+            enrolled: 20,
+            capacity: 25,
+            scraped_at: new Date().toISOString(),
+            updated_at: new Date().toISOString(),
+          },
+        ],
+      };
+
       const aiMessage: Message = {
         id: (Date.now() + 1).toString(),
         role: "assistant",
-        content: "Based on your interests, I recommend the following schedule:\n\n• CSC 101 - Introduction to Computer Science (MWF 10:00-11:00)\n• MAT 201 - Calculus I (TTh 1:00-2:30)\n• ENG 102 - English Composition (MW 2:00-3:30)\n\nThis schedule has no conflicts and balances your workload throughout the week. The professors for these sections have high ratings. Would you like me to add these courses to your schedule?",
+        content: "Based on your interests, I recommend the following schedule:\n\n• CSC 101 - Introduction to Computer Science (MWF 10:00-11:00)\n• MAT 201 - Calculus I (TTh 1:00-2:30)\n• ENG 102 - English Composition (MW 2:00-3:30)\n\nThis schedule has no conflicts and balances your workload throughout the week. The professors for these sections have high ratings. I've updated your calendar to show this schedule!",
         timestamp: new Date(),
-        suggestedSchedule: {
-          courses: [
-            { code: "CSC 101", days: "MWF", time: "10:00-11:00" },
-            { code: "MAT 201", days: "TTh", time: "1:00-2:30" },
-            { code: "ENG 102", days: "MW", time: "2:00-3:30" },
-          ],
-        },
+        suggestedSchedule,
       };
+      
       setChatMessages((prev) => [...prev, aiMessage]);
+      
+      // Update the calendar grid with AI-suggested schedule
+      await updateFromAI(suggestedSchedule);
+      
       setIsAiThinking(false);
     }, 1500);
   };
@@ -205,20 +264,40 @@ export default function ScheduleBuilder() {
               </div>
             </div>
 
-            <ScheduleGrid />
+            <ScheduleGrid 
+              sections={sections}
+              conflicts={conflicts}
+              editable={true}
+            />
 
             {/* Conflict Detection Alert */}
-            <div className="bg-green-50 border border-green-200 rounded-lg p-4">
-              <div className="flex items-start gap-3">
-                <div className="text-green-600 text-xl">✅</div>
-                <div>
-                  <h3 className="font-semibold text-green-900">No Conflicts Detected</h3>
-                  <p className="text-sm text-green-800 mt-1">
-                    Your schedule looks great! All classes fit without overlaps.
-                  </p>
+            {conflicts.length === 0 ? (
+              <div className="bg-green-50 border border-green-200 rounded-lg p-4">
+                <div className="flex items-start gap-3">
+                  <div className="text-green-600 text-xl">✅</div>
+                  <div>
+                    <h3 className="font-semibold text-green-900">No Conflicts Detected</h3>
+                    <p className="text-sm text-green-800 mt-1">
+                      Your schedule looks great! All classes fit without overlaps.
+                    </p>
+                  </div>
                 </div>
               </div>
-            </div>
+            ) : (
+              <div className="bg-red-50 border border-red-200 rounded-lg p-4">
+                <div className="flex items-start gap-3">
+                  <div className="text-red-600 text-xl">⚠️</div>
+                  <div>
+                    <h3 className="font-semibold text-red-900">
+                      {conflicts.length} Schedule Conflict{conflicts.length > 1 ? 's' : ''} Detected
+                    </h3>
+                    <p className="text-sm text-red-800 mt-1">
+                      Some courses overlap. Please review your schedule and remove conflicting courses.
+                    </p>
+                  </div>
+                </div>
+              </div>
+            )}
           </TabsContent>
 
           {/* AI Chat Tab */}
