@@ -5,16 +5,51 @@ import { useState } from "react";
 import { useToast } from "@/components/ui/use-toast";
 import { notifications } from "@/lib/notifications";
 
+/**
+ * Props for the AuthButton component
+ */
 interface AuthButtonProps {
+  /** The authentication action to perform */
   action: "login" | "signup" | "logout";
+  /** Callback function called on successful authentication */
   onSuccess?: () => void;
+  /** Callback function called on authentication error */
   onError?: (error: Error) => void;
+  /** Whether the button is disabled */
   disabled?: boolean;
+  /** Button content (text or elements) */
   children?: React.ReactNode;
+  /** Additional CSS classes */
   className?: string;
+  /** Button visual variant */
   variant?: "default" | "destructive" | "outline" | "secondary" | "ghost" | "link";
 }
 
+/**
+ * AuthButton - A button component for authentication actions
+ * 
+ * Features:
+ * - Handles login, signup, and logout actions
+ * - Shows loading state during authentication
+ * - Displays success/error notifications
+ * - Integrates with useAuth hook
+ * - Supports custom callbacks for success/error
+ * 
+ * @example
+ * ```tsx
+ * <AuthButton action="login" onSuccess={() => navigate('/dashboard')}>
+ *   Sign In
+ * </AuthButton>
+ * ```
+ * 
+ * @param action - The authentication action to perform (login, signup, logout)
+ * @param onSuccess - Optional callback called on successful authentication
+ * @param onError - Optional callback called on authentication error
+ * @param disabled - Whether the button is disabled
+ * @param children - Button content
+ * @param className - Additional CSS classes
+ * @param variant - Button visual variant
+ */
 export function AuthButton({
   action,
   onSuccess,
