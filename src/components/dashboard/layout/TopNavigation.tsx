@@ -15,9 +15,11 @@ import {
   TooltipProvider,
   TooltipTrigger,
 } from "@/components/ui/tooltip";
-import { Bell, Home, Search, Settings, User } from "lucide-react";
-import { Link } from "react-router-dom";
+import { Bell, Home, Search, Settings, User, LogOut } from "lucide-react";
+import { Link, useNavigate } from "react-router-dom";
 import { useAuth } from "../../../../supabase/auth";
+import { useState } from "react";
+import { useToast } from "@/components/ui/use-toast";
 
 interface TopNavigationProps {
   onSearch?: (query: string) => void;
@@ -32,6 +34,36 @@ const TopNavigation = ({
   ],
 }: TopNavigationProps) => {
   const { user, signOut } = useAuth();
+  const navigate = useNavigate();
+  const { toast } = useToast();
+  const [isLoggingOut, setIsLoggingOut] = useState(false);
+
+  const handleLogout = async () => {
+    setIsLoggingOut(true);
+    try {
+      await signOut();
+      // Clear any local storage items
+      localStorage.clear();
+      sessionStorage.clear();
+      
+      toast({
+        title: "Logged out successfully",
+        description: "You have been signed out of your account.",
+      });
+      
+      // Navigate to landing page
+      navigate("/");
+    } catch (error) {
+      console.error("Logout error:", error);
+      toast({
+        title: "Logout failed",
+        description: error instanceof Error ? error.message : "Failed to log out. Please try again.",
+        variant: "destructive",
+      });
+    } finally {
+      setIsLoggingOut(false);
+    }
+  };
 
   if (!user) return null;
 
@@ -106,8 +138,13 @@ const TopNavigation = ({
               Settings
             </DropdownMenuItem>
             <DropdownMenuSeparator />
-            <DropdownMenuItem className="cursor-pointer" onSelect={() => signOut()}>
-              Log out
+            <DropdownMenuItem 
+              className="cursor-pointer text-red-600 focus:text-red-600" 
+              onSelect={handleLogout}
+              disabled={isLoggingOut}
+            >
+              <LogOut className="mr-2 h-4 w-4" />
+              {isLoggingOut ? "Logging out..." : "Log out"}
             </DropdownMenuItem>
           </DropdownMenuContent>
         </DropdownMenu>
