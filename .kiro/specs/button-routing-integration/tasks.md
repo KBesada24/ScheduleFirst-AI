@@ -205,28 +205,37 @@ This implementation plan breaks down the button routing and integration system i
 - [ ] 6.4 Integrate chat with calendar grid
   - Update ScheduleGrid when AI suggests schedule
   - Map each course to correct time slots
+
+
+
+
   - Use distinct colors for each course
   - Display schedule in preview panel
   - _Requirements: 5.5, 13.3, 13.4_
 
-- [ ] 6.5 Implement schedule preview functionality
+- [x] 6.5 Implement schedule preview functionality
+
   - Allow user to preview suggested schedules
   - Switch between multiple schedule options
   - Update calendar grid on preview switch (< 100ms)
   - Add "Apply to My Schedule" button
   - _Requirements: 13.5, 13.6_
 
+
+
 - [ ] 7. Implement schedule optimization button functionality
 - [ ] 7.1 Create OptimizeButton component
   - Build component with courseCodes and constraints props
   - Validate course codes exist
   - Call /api/schedule/optimize endpoint
+
   - Display loading state with progress indicator
   - _Requirements: 6.1, 6.2_
 
 - [ ] 7.2 Implement optimization request handling
   - Gather user's required courses
   - Collect schedule constraints (time preferences, professor ratings)
+
   - Send optimization request to backend
   - Handle API errors gracefully
   - _Requirements: 6.1, 6.2, 6.6_
