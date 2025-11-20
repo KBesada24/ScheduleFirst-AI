@@ -212,25 +212,7 @@ export default function ScheduleBuilder() {
                   {courses.slice(0, 10).map((course) => (
                     <CourseCard
                       key={course.id}
-                      course={{
-                        id: course.id,
-                        course_code: course.course_code,
-                        name: course.name,
-                        credits: course.credits || 3,
-                        department: course.department || "Unknown",
-                        sections: course.sections.map((section) => ({
-                          id: section.id,
-                          section_number: section.section_number,
-                          professor_name: section.professor_name || "TBA",
-                          days: section.days || "TBA",
-                          start_time: section.start_time || "TBA",
-                          end_time: section.end_time || "TBA",
-                          location: section.location || "TBA",
-                          modality: section.modality || "In-person",
-                          enrolled: section.enrolled || 0,
-                          capacity: section.capacity || 30,
-                        })),
-                      }}
+                      course={course}
                     />
                   ))}
                 </div>
