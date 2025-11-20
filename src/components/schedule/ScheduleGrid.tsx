@@ -2,7 +2,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { AlertCircle } from "lucide-react";
 import { CourseSection } from "@/lib/supabase-queries";
-import { useMemo } from "react";
+import { useMemo, useRef, useEffect } from "react";
 
 export interface ScheduleEvent {
   id: string;
@@ -71,6 +71,22 @@ export default function ScheduleGrid({
   onSectionClick,
   editable = false
 }: ScheduleGridProps) {
+  const scrollContainerRef = useRef<HTMLDivElement>(null);
+  const previousScrollTop = useRef<number>(0);
+
+  // Maintain scroll position during updates
+  useEffect(() => {
+    if (scrollContainerRef.current) {
+      scrollContainerRef.current.scrollTop = previousScrollTop.current;
+    }
+  }, [sections, events]);
+
+  // Save scroll position before updates
+  const handleScroll = () => {
+    if (scrollContainerRef.current) {
+      previousScrollTop.current = scrollContainerRef.current.scrollTop;
+    }
+  };
   
   /**
    * Convert time string to minutes since midnight
@@ -274,7 +290,11 @@ export default function ScheduleGrid({
         )}
       </CardHeader>
       <CardContent>
-        <div className="overflow-x-auto">
+        <div 
+          ref={scrollContainerRef}
+          onScroll={handleScroll}
+          className="overflow-x-auto"
+        >
           <div className="min-w-[800px]">
             {/* Header with days */}
             <div className="grid grid-cols-6 gap-2 mb-2">
@@ -320,7 +340,7 @@ export default function ScheduleGrid({
                   return (
                     <div
                       key={event.id}
-                      className={`absolute z-10 transition-all duration-300 ease-in-out ${
+                      className={`absolute z-10 transition-all duration-300 ease-in-out animate-in fade-in slide-in-from-bottom-2 ${
                         editable ? 'cursor-pointer hover:shadow-lg hover:scale-105' : ''
                       }`}
                       style={{

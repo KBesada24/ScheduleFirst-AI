@@ -129,29 +129,39 @@ This implementation plan breaks down the button routing and integration system i
   - Persist filters in URL query params
   - _Requirements: 3.3_
 
-- [ ] 5. Implement schedule management button functionality
-- [ ] 5.1 Create ScheduleActionButton component
+- [x] 5. Implement schedule management button functionality
+
+
+- [x] 5.1 Create ScheduleActionButton component
+
+
   - Build component with action prop (add, remove)
   - Call addSectionToSchedule or removeSectionFromSchedule
   - Implement optimistic UI updates
   - Add rollback on error
   - _Requirements: 4.1, 4.2, 4.3, 4.4_
 
-- [ ] 5.2 Implement conflict detection
+- [x] 5.2 Implement conflict detection
+
+
   - Call checkScheduleConflicts before adding section
   - Display conflict alert dialog with details
   - Prevent adding conflicting sections
   - Show conflict indicators on schedule grid
   - _Requirements: 4.5, 13.7_
 
-- [ ] 5.3 Update CourseCard component
+- [x] 5.3 Update CourseCard component
+
+
   - Add "Add to Schedule" button for each section
   - Integrate ScheduleActionButton
   - Show success feedback on add
   - Disable button if section already in schedule
   - _Requirements: 4.1, 4.2_
 
-- [ ] 5.4 Implement schedule grid updates
+- [x] 5.4 Implement schedule grid updates
+
+
   - Update ScheduleGrid component to accept sections prop
   - Re-render grid when sections change
   - Maintain scroll position during updates
