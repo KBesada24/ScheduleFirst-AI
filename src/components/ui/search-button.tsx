@@ -18,6 +18,7 @@ interface SearchButtonProps {
   onError: (error: Error) => void;
   disabled?: boolean;
   className?: string;
+  onClick?: () => void;
 }
 
 export function SearchButton({
@@ -27,6 +28,7 @@ export function SearchButton({
   onError,
   disabled = false,
   className = "",
+  onClick,
 }: SearchButtonProps) {
   const [loading, setLoading] = useState(false);
 
@@ -48,6 +50,11 @@ export function SearchButton({
   };
 
   const handleSearch = async () => {
+    // Call optional onClick callback for validation
+    if (onClick) {
+      onClick();
+    }
+
     if (!validateInputs()) {
       onError(new Error("Invalid search parameters"));
       return;

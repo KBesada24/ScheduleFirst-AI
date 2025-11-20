@@ -11,6 +11,7 @@ import SignUpForm from "./components/auth/SignUpForm";
 import { useAuth } from "../supabase/auth";
 import { Loader2 } from "lucide-react";
 import { useEffect } from "react";
+import { Toaster } from "./components/ui/toaster";
 
 /**
  * ProtectedRoute - Wrapper component for routes that require authentication
@@ -67,5 +68,10 @@ function AppRoutes() {
 }
 
 export default function App() {
-  return <AppRoutes />;
+  return (
+    <>
+      <AppRoutes />
+      <Toaster />
+    </>
+  );
 }

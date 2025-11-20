@@ -1,82 +1,60 @@
-import { useState } from "react";
 import { useAuth } from "../../../supabase/auth";
 import { AuthButton } from "@/components/ui/auth-button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { useNavigate, Link } from "react-router-dom";
 import AuthLayout from "./AuthLayout";
+import { useToast } from "@/components/ui/use-toast";
+import { notifications } from "@/lib/notifications";
+import { useFormSubmission } from "@/hooks/useFormSubmission";
+import { required, email, minLength, combine } from "@/lib/form-validation";
+
+interface LoginFormValues {
+  email: string;
+  password: string;
+}
 
 export default function LoginForm() {
-  const [email, setEmail] = useState("");
-  const [password, setPassword] = useState("");
-  const [error, setError] = useState("");
-  const [emailError, setEmailError] = useState("");
-  const [passwordError, setPasswordError] = useState("");
-  const [isSubmitting, setIsSubmitting] = useState(false);
   const { signIn } = useAuth();
   const navigate = useNavigate();
+  const { toast } = useToast();
 
-  const validateEmail = (email: string): boolean => {
-    setEmailError("");
-    if (!email) {
-      setEmailError("Email is required");
-      return false;
+  const {
+    values,
+    errors,
+    isSubmitting,
+    setValue,
+    handleSubmit,
+  } = useFormSubmission<LoginFormValues>(
+    { email: "", password: "" },
+    {
+      validationRules: {
+        email: combine(required, email),
+        password: combine(required, minLength(6)),
+      },
+      onSubmit: async (formValues) => {
+        await signIn(formValues.email, formValues.password);
+        
+        // Success notification - auto-dismisses after 3 seconds (Requirement 11.5)
+        toast(notifications.loginSuccess);
+        
+        // Check for stored redirect URL
+        const redirectUrl = sessionStorage.getItem("redirectAfterLogin");
+        if (redirectUrl) {
+          sessionStorage.removeItem("redirectAfterLogin");
+          navigate(redirectUrl);
+        } else {
+          navigate("/dashboard");
+        }
+      },
+      onError: (err) => {
+        console.error("Login error:", err);
+        
+        // Error notification - stays until dismissed (Requirement 11.4)
+        toast(notifications.loginError);
+      },
     }
-    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-    if (!emailRegex.test(email)) {
-      setEmailError("Please enter a valid email address");
-      return false;
-    }
-    return true;
-  };
-
-  const validatePassword = (password: string): boolean => {
-    setPasswordError("");
-    if (!password) {
-      setPasswordError("Password is required");
-      return false;
-    }
-    if (password.length < 6) {
-      setPasswordError("Password must be at least 6 characters");
-      return false;
-    }
-    return true;
-  };
-
-  const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
-    setError("");
-    setEmailError("");
-    setPasswordError("");
-    
-    // Validate all fields
-    const isEmailValid = validateEmail(email);
-    const isPasswordValid = validatePassword(password);
-    
-    if (!isEmailValid || !isPasswordValid) {
-      return;
-    }
-    
-    setIsSubmitting(true);
-    try {
-      await signIn(email, password);
-      
-      // Check for stored redirect URL
-      const redirectUrl = sessionStorage.getItem("redirectAfterLogin");
-      if (redirectUrl) {
-        sessionStorage.removeItem("redirectAfterLogin");
-        navigate(redirectUrl);
-      } else {
-        navigate("/dashboard");
-      }
-    } catch (err: any) {
-      console.error("Login error:", err);
-      const errorMessage = err?.message || "Invalid email or password";
-      setError(errorMessage);
-    } finally {
-      setIsSubmitting(false);
-    }
-  };
+  );
 
   return (
     <AuthLayout>
@@ -88,16 +66,12 @@ export default function LoginForm() {
               id="email"
               type="email"
               placeholder="name@example.com"
-              value={email}
-              onChange={(e) => {
-                setEmail(e.target.value);
-                setEmailError("");
-              }}
-              onBlur={() => validateEmail(email)}
+              value={values.email}
+              onChange={(e) => setValue("email", e.target.value)}
               required
-              className={`h-12 rounded-lg border-gray-300 focus:ring-blue-500 focus:border-blue-500 ${emailError ? "border-red-500" : ""}`}
+              className={`h-12 rounded-lg border-gray-300 focus:ring-blue-500 focus:border-blue-500 ${errors.email ? "border-red-500" : ""}`}
             />
-            {emailError && <p className="text-sm text-red-500">{emailError}</p>}
+            {errors.email && <p className="text-sm text-red-500">{errors.email}</p>}
           </div>
           <div className="space-y-2">
             <div className="flex items-center justify-between">
@@ -110,18 +84,13 @@ export default function LoginForm() {
               id="password"
               type="password"
               placeholder="Enter your password"
-              value={password}
-              onChange={(e) => {
-                setPassword(e.target.value);
-                setPasswordError("");
-              }}
-              onBlur={() => validatePassword(password)}
+              value={values.password}
+              onChange={(e) => setValue("password", e.target.value)}
               required
-              className={`h-12 rounded-lg border-gray-300 focus:ring-blue-500 focus:border-blue-500 ${passwordError ? "border-red-500" : ""}`}
+              className={`h-12 rounded-lg border-gray-300 focus:ring-blue-500 focus:border-blue-500 ${errors.password ? "border-red-500" : ""}`}
             />
-            {passwordError && <p className="text-sm text-red-500">{passwordError}</p>}
+            {errors.password && <p className="text-sm text-red-500">{errors.password}</p>}
           </div>
-          {error && <p className="text-sm text-red-500">{error}</p>}
           <AuthButton 
             action="login"
             disabled={isSubmitting}

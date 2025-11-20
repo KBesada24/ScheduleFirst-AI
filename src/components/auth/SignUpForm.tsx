@@ -1,4 +1,3 @@
-import { useState } from "react";
 import { useAuth } from "../../../supabase/auth";
 import { AuthButton } from "@/components/ui/auth-button";
 import { Input } from "@/components/ui/input";
@@ -6,93 +5,51 @@ import { Label } from "@/components/ui/label";
 import { useNavigate, Link } from "react-router-dom";
 import AuthLayout from "./AuthLayout";
 import { useToast } from "@/components/ui/use-toast";
+import { notifications } from "@/lib/notifications";
+import { useFormSubmission } from "@/hooks/useFormSubmission";
+import { required, email, minLength, combine } from "@/lib/form-validation";
+
+interface SignUpFormValues {
+  fullName: string;
+  email: string;
+  password: string;
+}
 
 export default function SignUpForm() {
-  const [email, setEmail] = useState("");
-  const [password, setPassword] = useState("");
-  const [fullName, setFullName] = useState("");
-  const [error, setError] = useState("");
-  const [fullNameError, setFullNameError] = useState("");
-  const [emailError, setEmailError] = useState("");
-  const [passwordError, setPasswordError] = useState("");
-  const [submitting, setSubmitting] = useState(false);
   const { signUp } = useAuth();
   const navigate = useNavigate();
   const { toast } = useToast();
 
-  const validateFullName = (name: string): boolean => {
-    setFullNameError("");
-    if (!name || name.trim().length === 0) {
-      setFullNameError("Full name is required");
-      return false;
+  const {
+    values,
+    errors,
+    isSubmitting,
+    setValue,
+    handleSubmit,
+  } = useFormSubmission<SignUpFormValues>(
+    { fullName: "", email: "", password: "" },
+    {
+      validationRules: {
+        fullName: combine(required, minLength(2)),
+        email: combine(required, email),
+        password: combine(required, minLength(8)),
+      },
+      onSubmit: async (formValues) => {
+        await signUp(formValues.email, formValues.password, formValues.fullName);
+        
+        // Success notification - auto-dismisses after 3 seconds (Requirement 11.5)
+        toast(notifications.signupSuccess);
+        
+        navigate("/success");
+      },
+      onError: (err) => {
+        console.error("Signup error:", err);
+        
+        // Error notification - stays until dismissed (Requirement 11.4)
+        toast(notifications.signupError);
+      },
     }
-    if (name.trim().length < 2) {
-      setFullNameError("Full name must be at least 2 characters");
-      return false;
-    }
-    return true;
-  };
-
-  const validateEmail = (email: string): boolean => {
-    setEmailError("");
-    if (!email) {
-      setEmailError("Email is required");
-      return false;
-    }
-    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-    if (!emailRegex.test(email)) {
-      setEmailError("Please enter a valid email address");
-      return false;
-    }
-    return true;
-  };
-
-  const validatePassword = (password: string): boolean => {
-    setPasswordError("");
-    if (!password) {
-      setPasswordError("Password is required");
-      return false;
-    }
-    if (password.length < 8) {
-      setPasswordError("Password must be at least 8 characters");
-      return false;
-    }
-    return true;
-  };
-
-  const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
-    setError("");
-    setFullNameError("");
-    setEmailError("");
-    setPasswordError("");
-    
-    // Validate all fields
-    const isFullNameValid = validateFullName(fullName);
-    const isEmailValid = validateEmail(email);
-    const isPasswordValid = validatePassword(password);
-    
-    if (!isFullNameValid || !isEmailValid || !isPasswordValid) {
-      return;
-    }
-    
-    setSubmitting(true);
-    try {
-      await signUp(email, password, fullName);
-      toast({
-        title: "Account created successfully!",
-        description: "Welcome to ScheduleFirst AI. Let's build your schedule.",
-        duration: 5000,
-      });
-      navigate("/success");
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : "Error creating account";
-      setError(msg);
-      toast({ title: "Sign up failed", description: msg, variant: "destructive" });
-    } finally {
-      setSubmitting(false);
-    }
-  };
+  );
 
   return (
     <AuthLayout>
@@ -103,16 +60,12 @@ export default function SignUpForm() {
             <Input
               id="fullName"
               placeholder="John Doe"
-              value={fullName}
-              onChange={(e) => {
-                setFullName(e.target.value);
-                setFullNameError("");
-              }}
-              onBlur={() => validateFullName(fullName)}
+              value={values.fullName}
+              onChange={(e) => setValue("fullName", e.target.value)}
               required
-              className={`h-12 rounded-lg border-gray-300 focus:ring-blue-500 focus:border-blue-500 ${fullNameError ? "border-red-500" : ""}`}
+              className={`h-12 rounded-lg border-gray-300 focus:ring-blue-500 focus:border-blue-500 ${errors.fullName ? "border-red-500" : ""}`}
             />
-            {fullNameError && <p className="text-sm text-red-500">{fullNameError}</p>}
+            {errors.fullName && <p className="text-sm text-red-500">{errors.fullName}</p>}
           </div>
           <div className="space-y-2">
             <Label htmlFor="email" className="text-sm font-medium text-gray-700">Email</Label>
@@ -120,16 +73,12 @@ export default function SignUpForm() {
               id="email"
               type="email"
               placeholder="name@example.com"
-              value={email}
-              onChange={(e) => {
-                setEmail(e.target.value);
-                setEmailError("");
-              }}
-              onBlur={() => validateEmail(email)}
+              value={values.email}
+              onChange={(e) => setValue("email", e.target.value)}
               required
-              className={`h-12 rounded-lg border-gray-300 focus:ring-blue-500 focus:border-blue-500 ${emailError ? "border-red-500" : ""}`}
+              className={`h-12 rounded-lg border-gray-300 focus:ring-blue-500 focus:border-blue-500 ${errors.email ? "border-red-500" : ""}`}
             />
-            {emailError && <p className="text-sm text-red-500">{emailError}</p>}
+            {errors.email && <p className="text-sm text-red-500">{errors.email}</p>}
           </div>
           <div className="space-y-2">
             <Label htmlFor="password" className="text-sm font-medium text-gray-700">Password</Label>
@@ -137,23 +86,18 @@ export default function SignUpForm() {
               id="password"
               type="password"
               placeholder="Create a password"
-              value={password}
-              onChange={(e) => {
-                setPassword(e.target.value);
-                setPasswordError("");
-              }}
-              onBlur={() => validatePassword(password)}
+              value={values.password}
+              onChange={(e) => setValue("password", e.target.value)}
               required
-              className={`h-12 rounded-lg border-gray-300 focus:ring-blue-500 focus:border-blue-500 ${passwordError ? "border-red-500" : ""}`}
+              className={`h-12 rounded-lg border-gray-300 focus:ring-blue-500 focus:border-blue-500 ${errors.password ? "border-red-500" : ""}`}
             />
-            {passwordError && <p className="text-sm text-red-500">{passwordError}</p>}
-            {!passwordError && <p className="text-xs text-gray-500 mt-1">Password must be at least 8 characters</p>}
+            {errors.password && <p className="text-sm text-red-500">{errors.password}</p>}
+            {!errors.password && <p className="text-xs text-gray-500 mt-1">Password must be at least 8 characters</p>}
           </div>
-          {error && <p className="text-sm text-red-500">{error}</p>}
           
           <AuthButton 
             action="signup"
-            disabled={submitting}
+            disabled={isSubmitting}
             className="w-full h-12 rounded-full bg-black text-white hover:bg-gray-800 text-sm font-medium"
           >
             Create account

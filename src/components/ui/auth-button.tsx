@@ -2,6 +2,8 @@ import { Button } from "@/components/ui/button";
 import { Loader2 } from "lucide-react";
 import { useAuth } from "../../../supabase/auth";
 import { useState } from "react";
+import { useToast } from "@/components/ui/use-toast";
+import { notifications } from "@/lib/notifications";
 
 interface AuthButtonProps {
   action: "login" | "signup" | "logout";
@@ -24,18 +26,23 @@ export function AuthButton({
 }: AuthButtonProps) {
   const { signIn, signUp, signOut } = useAuth();
   const [loading, setLoading] = useState(false);
+  const { toast } = useToast();
 
   const handleClick = async () => {
     setLoading(true);
     try {
       if (action === "logout") {
         await signOut();
+        // Success notification - auto-dismisses after 3 seconds (Requirement 11.5)
+        toast(notifications.logoutSuccess);
         onSuccess?.();
       }
       // For login and signup, the actual auth calls are handled by the forms
       // This component just provides the UI wrapper
     } catch (error) {
       const err = error instanceof Error ? error : new Error("Authentication failed");
+      // Error notification - stays until dismissed (Requirement 11.4)
+      toast(notifications.loginError);
       onError?.(err);
     } finally {
       setLoading(false);

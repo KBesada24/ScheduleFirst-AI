@@ -9,6 +9,7 @@ import { CourseWithSections } from "@/lib/supabase-queries";
 import { LoadingSpinner } from "@/components/ui/loading-spinner";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import CourseCard from "./CourseCard";
+import { minLength } from "@/lib/form-validation";
 
 interface CourseSearchProps {
   onSearch?: (query: string, filters: any) => void;
@@ -25,6 +26,7 @@ export default function CourseSearch({ onSearch }: CourseSearchProps) {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<Error | null>(null);
   const [hasSearched, setHasSearched] = useState(false);
+  const [searchError, setSearchError] = useState<string>("");
 
   // Update URL params when filters change
   useEffect(() => {
@@ -38,9 +40,30 @@ export default function CourseSearch({ onSearch }: CourseSearchProps) {
     setSearchParams(params, { replace: true });
   }, [searchQuery, department, modality, timeSlot, setSearchParams]);
 
+  const validateSearchQuery = (): boolean => {
+    setSearchError("");
+    
+    // Allow empty search with filters
+    if (!searchQuery && (department !== "all" || modality !== "all" || timeSlot !== "all")) {
+      return true;
+    }
+    
+    // If search query is provided, validate it
+    if (searchQuery) {
+      const validation = minLength(2)(searchQuery);
+      if (!validation.isValid) {
+        setSearchError(validation.error || "Search query must be at least 2 characters");
+        return false;
+      }
+    }
+    
+    return true;
+  };
+
   const handleSearchResults = (results: CourseWithSections[]) => {
     setCourses(results);
     setError(null);
+    setSearchError("");
     setHasSearched(true);
     setLoading(false);
     onSearch?.(searchQuery, { department, modality, timeSlot });
@@ -60,7 +83,14 @@ export default function CourseSearch({ onSearch }: CourseSearchProps) {
     setSearchQuery("");
     setCourses([]);
     setError(null);
+    setSearchError("");
     setHasSearched(false);
+  };
+
+  const handleSearch = () => {
+    if (validateSearchQuery()) {
+      setLoading(true);
+    }
   };
 
   return (
@@ -70,24 +100,30 @@ export default function CourseSearch({ onSearch }: CourseSearchProps) {
           <div className="space-y-4">
             {/* Search Bar */}
             <div className="flex gap-2">
-              <div className="relative flex-1">
+              <div className="relative flex-1 space-y-1">
                 <Input
                   placeholder="Search courses (e.g., CSC 381, Algorithms, Computer Science)"
                   value={searchQuery}
-                  onChange={(e) => setSearchQuery(e.target.value)}
+                  onChange={(e) => {
+                    setSearchQuery(e.target.value);
+                    setSearchError("");
+                  }}
                   onKeyDown={(e) => {
                     if (e.key === 'Enter') {
-                      setLoading(true);
+                      handleSearch();
                     }
                   }}
+                  className={searchError ? "border-red-500" : ""}
                 />
+                {searchError && <p className="text-sm text-red-500">{searchError}</p>}
               </div>
               <SearchButton
                 query={searchQuery}
                 filters={{ department, modality, timeSlot }}
                 onResults={handleSearchResults}
                 onError={handleSearchError}
-                disabled={loading}
+                disabled={loading || !!searchError}
+                onClick={handleSearch}
               />
             </div>
 

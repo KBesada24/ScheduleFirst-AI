@@ -64,8 +64,43 @@ export function OptimizeButton({
     return true;
   };
 
+  const validateConstraints = (): boolean => {
+    if (!constraints) {
+      return true; // Constraints are optional
+    }
+
+    // Validate time constraints
+    if (constraints.earliestStartTime && constraints.latestEndTime) {
+      const earliest = new Date(`2000-01-01 ${constraints.earliestStartTime}`);
+      const latest = new Date(`2000-01-01 ${constraints.latestEndTime}`);
+      
+      if (earliest >= latest) {
+        toast({
+          title: "Invalid Time Range",
+          description: "Earliest start time must be before latest end time.",
+          variant: "destructive",
+        });
+        return false;
+      }
+    }
+
+    // Validate professor rating
+    if (constraints.minProfessorRating !== undefined) {
+      if (constraints.minProfessorRating < 0 || constraints.minProfessorRating > 5) {
+        toast({
+          title: "Invalid Rating",
+          description: "Professor rating must be between 0 and 5.",
+          variant: "destructive",
+        });
+        return false;
+      }
+    }
+
+    return true;
+  };
+
   const handleOptimize = async () => {
-    if (!validateCourseCodes()) {
+    if (!validateCourseCodes() || !validateConstraints()) {
       return;
     }
 

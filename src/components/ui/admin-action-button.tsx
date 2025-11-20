@@ -3,6 +3,7 @@ import { Button } from "@/components/ui/button";
 import { Database, Trash2, Loader2, AlertTriangle } from "lucide-react";
 import { seedDatabase, clearDatabase } from "@/lib/api-endpoints";
 import { useToast } from "@/components/ui/use-toast";
+import { createSuccessToast, createErrorToast } from "@/lib/notifications";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -49,18 +50,18 @@ export function AdminActionButton({
         // Log seeded data details
         console.log("Database seeded:", result);
         
-        toast({
-          title: "Database Seeded",
+        // Success notification - auto-dismisses after 3 seconds (Requirement 11.5)
+        toast(createSuccessToast("Database Seeded", {
           description: successMessage,
-        });
+        }));
       } else {
         result = await clearDatabase();
         successMessage = "Database cleared successfully!";
         
-        toast({
-          title: "Database Cleared",
+        // Success notification - auto-dismisses after 3 seconds (Requirement 11.5)
+        toast(createSuccessToast("Database Cleared", {
           description: successMessage,
-        });
+        }));
       }
 
       onSuccess(successMessage);
@@ -69,11 +70,10 @@ export function AdminActionButton({
       
       onError(err);
       
-      toast({
-        title: "Error",
+      // Error notification - stays until dismissed (Requirement 11.4)
+      toast(createErrorToast("Error", {
         description: err.message || `Failed to ${action} database`,
-        variant: "destructive",
-      });
+      }));
     } finally {
       setLoading(false);
       setShowConfirmation(false);

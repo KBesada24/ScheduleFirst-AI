@@ -3,6 +3,11 @@
  * 
  * Centralized notification system for success/error messages
  * Uses shadcn/ui toast component
+ * 
+ * Requirements:
+ * - Success messages display for 3 seconds (11.5)
+ * - Error messages display until dismissed (11.4)
+ * - Notifications positioned in top-right corner
  */
 
 // Note: This module provides a wrapper around the toast hook
@@ -15,6 +20,7 @@ export interface NotificationOptions {
 
 /**
  * Create a success toast configuration
+ * Success messages auto-dismiss after 3 seconds (Requirement 11.5)
  */
 export function createSuccessToast(
   title: string,
@@ -23,12 +29,14 @@ export function createSuccessToast(
   return {
     title,
     description: options.description,
-    duration: options.duration || 3000,
+    variant: "success" as const,
+    duration: options.duration !== undefined ? options.duration : 3000,
   };
 }
 
 /**
  * Create an error toast configuration
+ * Error messages stay until manually dismissed (Requirement 11.4)
  */
 export function createErrorToast(
   title: string,
@@ -38,7 +46,7 @@ export function createErrorToast(
     title,
     description: options.description,
     variant: "destructive" as const,
-    duration: options.duration || 5000,
+    duration: options.duration !== undefined ? options.duration : Infinity,
   };
 }
 
@@ -52,7 +60,7 @@ export function createInfoToast(
   return {
     title,
     description: options.description,
-    duration: options.duration || 3000,
+    duration: options.duration !== undefined ? options.duration : 3000,
   };
 }
 
@@ -66,13 +74,17 @@ export function createWarningToast(
   return {
     title,
     description: options.description,
-    duration: options.duration || 4000,
+    variant: "destructive" as const,
+    duration: options.duration !== undefined ? options.duration : 4000,
   };
 }
 
 /**
  * Notification presets for common actions
  * Use with the toast hook: toast(notifications.loginSuccess)
+ * 
+ * Success notifications auto-dismiss after 3 seconds
+ * Error notifications stay until manually dismissed
  */
 export const notifications = {
   // Auth
