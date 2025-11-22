@@ -34,22 +34,22 @@ export default function LoginForm() {
       },
       onSubmit: async (formValues) => {
         await signIn(formValues.email, formValues.password);
-        
+
         // Success notification - auto-dismisses after 3 seconds (Requirement 11.5)
         toast(notifications.loginSuccess);
-        
+
         // Check for stored redirect URL
         const redirectUrl = sessionStorage.getItem("redirectAfterLogin");
         if (redirectUrl) {
           sessionStorage.removeItem("redirectAfterLogin");
           navigate(redirectUrl);
         } else {
-          navigate("/dashboard");
+          navigate("/schedule-builder");
         }
       },
       onError: (err) => {
         console.error("Login error:", err);
-        
+
         // Error notification - stays until dismissed (Requirement 11.4)
         toast(notifications.loginError);
       },
@@ -91,15 +91,15 @@ export default function LoginForm() {
             />
             {errors.password && <p className="text-sm text-red-500">{errors.password}</p>}
           </div>
-          <AuthButton 
+          <AuthButton
             action="login"
             disabled={isSubmitting}
             className="w-full h-12 rounded-full bg-black text-white hover:bg-gray-800 text-sm font-medium"
           >
             Sign in
           </AuthButton>
-      
-      
+
+
           <div className="text-sm text-center text-gray-600 mt-6">
             Don't have an account?{" "}
             <Link to="/signup" className="text-blue-600 hover:underline font-medium">
