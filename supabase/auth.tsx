@@ -8,6 +8,7 @@ type AuthContextType = {
   error: Error | null;
   signIn: (email: string, password: string) => Promise<void>;
   signUp: (email: string, password: string, fullName: string) => Promise<void>;
+  signInWithGoogle: () => Promise<void>;
   signOut: () => Promise<void>;
 };
 
@@ -42,29 +43,29 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     maxRetries = 3
   ): Promise<T> => {
     let lastError: Error | null = null;
-    
+
     for (let attempt = 0; attempt < maxRetries; attempt++) {
       try {
         return await fn();
       } catch (err) {
         lastError = err instanceof Error ? err : new Error("Unknown error");
-        
+
         // Check if it's a network error that should be retried
-        const isNetworkError = 
+        const isNetworkError =
           lastError.message.includes("network") ||
           lastError.message.includes("fetch") ||
           lastError.message.includes("Failed to fetch");
-        
+
         if (!isNetworkError || attempt === maxRetries - 1) {
           throw lastError;
         }
-        
+
         // Exponential backoff: 1s, 2s, 4s
         const delay = Math.pow(2, attempt) * 1000;
         await new Promise(resolve => setTimeout(resolve, delay));
       }
     }
-    
+
     throw lastError || new Error("Max retries exceeded");
   };
 
@@ -128,6 +129,23 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     }
   };
 
+  const signInWithGoogle = async () => {
+    setError(null);
+    try {
+      const { error } = await supabase.auth.signInWithOAuth({
+        provider: 'google',
+        options: {
+          redirectTo: `${window.location.origin}/schedule-builder`,
+        },
+      });
+      if (error) throw error;
+    } catch (err) {
+      const authError = err instanceof Error ? err : new Error("Google sign in failed");
+      setError(authError);
+      throw authError;
+    }
+  };
+
   const signOut = async () => {
     setError(null);
     try {
@@ -145,7 +163,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   };
 
   return (
-    <AuthContext.Provider value={{ user, loading, error, signIn, signUp, signOut }}>
+    <AuthContext.Provider value={{ user, loading, error, signIn, signUp, signInWithGoogle, signOut }}>
       {children}
     </AuthContext.Provider>
   );
