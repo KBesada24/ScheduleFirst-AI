@@ -277,7 +277,7 @@ async def chat_with_ai(message: Dict[str, Any]):
         
         # Configure Gemini API
         genai.configure(api_key=settings.gemini_api_key)
-        model = genai.GenerativeModel('gemini-2.0-flash-exp')
+        model = genai.GenerativeModel('gemini-2.0-flash')
         
         # Build context for the AI
         current_courses = context.get("currentCourses", [])
