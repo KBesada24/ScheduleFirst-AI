@@ -267,17 +267,44 @@ async def validate_schedule_action(request: ScheduleValidationRequest):
 async def chat_with_ai(message: Dict[str, Any]):
     """Chat with AI assistant for schedule recommendations"""
     try:
+        import google.generativeai as genai
+        
         user_message = message.get("message", "")
         context = message.get("context", {})
         
         if not user_message:
             raise HTTPException(status_code=400, detail="Message is required")
         
-        # TODO: Integrate with Gemini API for real AI responses
-        # For now, return a simple response
+        # Configure Gemini API
+        genai.configure(api_key=settings.gemini_api_key)
+        model = genai.GenerativeModel('gemini-2.0-flash-exp')
+        
+        # Build context for the AI
+        current_courses = context.get("currentCourses", [])
+        semester = context.get("semester", "Spring 2025")
+        university = context.get("university", "Baruch College")
+        
+        context_text = f"""You are an AI assistant helping students at {university} with their {semester} schedule.
+
+Current schedule context:
+- Courses in schedule: {', '.join([c.get('name', c.get('code', 'Unknown')) for c in current_courses]) if current_courses else 'None yet'}
+- Number of courses: {len(current_courses)}
+
+User question: {user_message}
+
+Provide helpful, concise advice about:
+- Course selection and recommendations
+- Schedule optimization (avoiding conflicts, minimizing gaps)
+- Professor insights (if relevant)
+- General academic planning
+
+Keep responses conversational and under 150 words."""
+
+        # Generate AI response
+        ai_response = model.generate_content(context_text)
         
         response = {
-            "message": f"I received your message: {user_message}",
+            "message": ai_response.text,
             "suggestions": [],
             "context": context
         }
