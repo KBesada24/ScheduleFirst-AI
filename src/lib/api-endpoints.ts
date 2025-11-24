@@ -197,6 +197,15 @@ export async function getOptimizationHistory(userId: string) {
   return apiClient.get(`/api/schedule/optimize/history/${userId}`);
 }
 
+/**
+ * Validate schedule action (add/remove section)
+ */
+export async function validateScheduleAction(
+  request: ScheduleValidationRequest
+): Promise<ScheduleValidationResponse> {
+  return apiClient.post("/api/schedule/validate", request);
+}
+
 // ============================================
 // PROFESSOR ENDPOINTS
 // ============================================

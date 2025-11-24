@@ -1,12 +1,13 @@
 import { useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Plus, Trash2 } from "lucide-react";
-import { 
-  addSectionToSchedule, 
+import {
+  addSectionToSchedule,
   removeSectionFromSchedule,
   checkScheduleConflicts,
-  TimeConflict 
+  TimeConflict
 } from "@/lib/supabase-queries";
+import { validateScheduleAction } from "@/lib/api-endpoints";
 import { LoadingSpinner } from "@/components/ui/loading-spinner";
 import { useToast } from "@/components/ui/use-toast";
 
@@ -45,7 +46,25 @@ export function ScheduleActionButton({
 
     try {
       if (action === "add") {
-        // Check for conflicts before adding
+        // Step 1: Validate with backend API
+        const validation = await validateScheduleAction({
+          scheduleId,
+          sectionId,
+          action: "add"
+        });
+
+        if (!validation.valid) {
+          // Handle backend validation failure
+          toast({
+            title: "Validation Failed",
+            description: validation.warnings[0] || "Cannot add section to schedule.",
+            variant: "destructive",
+          });
+          setLoading(false);
+          return;
+        }
+
+        // Step 2: Check for conflicts (Client-side + Supabase)
         const sectionsToCheck = [...currentSections, sectionId];
         const conflicts = await checkScheduleConflicts(sectionsToCheck);
 
@@ -54,20 +73,20 @@ export function ScheduleActionButton({
           if (onConflict) {
             onConflict(conflicts);
           }
-          
+
           toast({
             title: "Schedule Conflict Detected",
             description: `This section conflicts with ${conflicts.length} other section(s) in your schedule.`,
             variant: "destructive",
           });
-          
+
           setLoading(false);
           return;
         }
 
         // Add section to schedule
         await addSectionToSchedule(scheduleId, sectionId);
-        
+
         toast({
           title: "Section Added",
           description: "The section has been added to your schedule.",
@@ -75,7 +94,7 @@ export function ScheduleActionButton({
       } else {
         // Remove section from schedule
         await removeSectionFromSchedule(scheduleId, sectionId);
-        
+
         toast({
           title: "Section Removed",
           description: "The section has been removed from your schedule.",
@@ -88,11 +107,11 @@ export function ScheduleActionButton({
       }
     } catch (error) {
       const err = error instanceof Error ? error : new Error("Action failed");
-      
+
       if (onError) {
         onError(err);
       }
-      
+
       toast({
         title: "Error",
         description: err.message || `Failed to ${action} section`,

@@ -226,6 +226,43 @@ async def get_professor(
         raise HTTPException(status_code=500, detail=str(e))
 
 
+class ScheduleValidationRequest(BaseModel):
+    schedule_id: str
+    section_id: str
+    action: str  # 'add' or 'remove'
+
+
+@app.post("/api/schedule/validate")
+async def validate_schedule_action(request: ScheduleValidationRequest):
+    """Validate adding/removing a section to/from a schedule"""
+    try:
+        # Check for conflicts
+        if request.action == "add":
+            # Get section details
+            section = await supabase_service.get_section_by_id(request.section_id)
+            if not section:
+                raise HTTPException(status_code=404, detail="Section not found")
+            
+            # Get current schedule sections
+            # This is a simplified check - in a real app we'd fetch the full schedule
+            # For now, we'll assume the frontend handles basic conflict detection
+            # and the backend does a second pass or more complex validation
+            
+            # TODO: Implement full conflict detection logic here
+            # For now, return success
+            pass
+            
+        return {
+            "valid": True,
+            "conflicts": [],
+            "warnings": [],
+            "suggestions": []
+        }
+    except Exception as e:
+        logger.error(f"Error validating schedule action: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 @app.post("/api/chat/message")
 async def chat_with_ai(message: Dict[str, Any]):
     """Chat with AI assistant for schedule recommendations"""
