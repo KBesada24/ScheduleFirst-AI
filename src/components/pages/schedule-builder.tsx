@@ -11,7 +11,7 @@ import { Calendar, BookOpen, GraduationCap, Sparkles, MessageSquare, Send } from
 import { useCourseSearch, useProfessorSearch } from "@/lib/supabase-hooks";
 import { useScheduleGrid } from "@/hooks/useScheduleGrid";
 import { OptimizeButton } from "@/components/ui/optimize-button";
-import { ScheduleOptimizationResponse } from "@/lib/api-endpoints";
+import { ScheduleOptimizationResponse, sendChatMessage } from "@/lib/api-endpoints";
 
 type Message = {
   id: string;
@@ -89,74 +89,51 @@ export default function ScheduleBuilder() {
     setChatInput("");
     setIsAiThinking(true);
 
-    // Simulate AI response (replace with actual API call)
-    setTimeout(async () => {
-      // Simulated AI schedule response
-      const suggestedSchedule = {
-        sections: [
-          {
-            id: "sim-1",
-            course_id: "course-1",
-            section_number: "CSC 101",
-            professor_name: "Dr. Johnson",
-            days: "MWF",
-            start_time: "10:00",
-            end_time: "11:00",
-            location: "NAC 5/150",
-            modality: "In-person",
-            enrolled: 25,
-            capacity: 30,
-            scraped_at: new Date().toISOString(),
-            updated_at: new Date().toISOString(),
+    try {
+      // Use ChatButton's API call
+      const response = await sendChatMessage({
+        message: chatInput,
+        context: {
+          currentSchedule: sections.length > 0 ? {
+            sections: sections,
+            count: sections.length,
+          } : undefined,
+          semester: "Fall 2025",
+          preferences: {
+            // Add any user preferences here
           },
-          {
-            id: "sim-2",
-            course_id: "course-2",
-            section_number: "MAT 201",
-            professor_name: "Prof. Smith",
-            days: "TTh",
-            start_time: "13:00",
-            end_time: "14:30",
-            location: "NAC 6/113",
-            modality: "In-person",
-            enrolled: 28,
-            capacity: 35,
-            scraped_at: new Date().toISOString(),
-            updated_at: new Date().toISOString(),
-          },
-          {
-            id: "sim-3",
-            course_id: "course-3",
-            section_number: "ENG 102",
-            professor_name: "Dr. Williams",
-            days: "MW",
-            start_time: "14:00",
-            end_time: "15:30",
-            location: "NAC 7/201",
-            modality: "In-person",
-            enrolled: 20,
-            capacity: 25,
-            scraped_at: new Date().toISOString(),
-            updated_at: new Date().toISOString(),
-          },
-        ],
-      };
+        },
+      });
 
-      const aiMessage: Message = {
+      const assistantMessage: Message = {
         id: (Date.now() + 1).toString(),
         role: "assistant",
-        content: "Based on your interests, I recommend the following schedule:\n\n• CSC 101 - Introduction to Computer Science (MWF 10:00-11:00)\n• MAT 201 - Calculus I (TTh 1:00-2:30)\n• ENG 102 - English Composition (MW 2:00-3:30)\n\nThis schedule has no conflicts and balances your workload throughout the week. The professors for these sections have high ratings. I've updated your calendar to show this schedule!",
+        content: response.message,
         timestamp: new Date(),
-        suggestedSchedule,
+        suggestedSchedule: response.suggestedSchedule,
       };
 
-      setChatMessages((prev) => [...prev, aiMessage]);
+      setChatMessages(prev => [...prev, assistantMessage]);
 
-      // Update the calendar grid with AI-suggested schedule
-      await updateFromAI(suggestedSchedule);
-
+      // Handle suggestions if any
+      if (response.suggestedSchedule) {
+        // Display suggestion UI
+        console.log('AI suggested schedule:', response.suggestedSchedule);
+        // Update the calendar grid with AI-suggested schedule
+        await updateFromAI(response.suggestedSchedule);
+      }
+    } catch (error) {
+      console.error('Chat error:', error);
+      const errorMessage: Message = {
+        id: (Date.now() + 1).toString(),
+        role: "assistant",
+        content: "Sorry, I encountered an error. Please try again.",
+        timestamp: new Date(),
+      };
+      setChatMessages(prev => [...prev, errorMessage]);
+    } finally {
       setIsAiThinking(false);
-    }, 1500);
+    }
   };
 
   return (
