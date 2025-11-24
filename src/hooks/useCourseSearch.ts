@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback, useRef } from "react";
 import { searchCourses, CourseWithSections } from "@/lib/supabase-queries";
+import { searchCoursesAPI } from "@/lib/api-endpoints";
 import { CourseFilters } from "@/components/ui/search-button";
 
 interface SearchParams {
@@ -26,7 +27,7 @@ export function useCourseSearch() {
 
   // Cache for search results
   const cacheRef = useRef<Map<string, CacheEntry>>(new Map());
-  
+
   // Debounce timer
   const debounceTimerRef = useRef<NodeJS.Timeout | null>(null);
 
@@ -43,10 +44,21 @@ export function useCourseSearch() {
     return Date.now() - entry.timestamp < CACHE_DURATION;
   }, []);
 
+  // Determine if we should use enhanced search (backend API)
+  const shouldUseEnhancedSearch = useCallback((query: string): boolean => {
+    const naturalLanguageIndicators = [
+      'similar to', 'like', 'recommend', 'about', 'related to',
+      'easy', 'hard', 'best', 'worst', 'rating'
+    ];
+
+    const lowerQuery = query.toLowerCase();
+    return naturalLanguageIndicators.some(indicator => lowerQuery.includes(indicator));
+  }, []);
+
   // Perform the actual search
   const performSearch = useCallback(async (params: SearchParams) => {
     const cacheKey = getCacheKey(params);
-    
+
     // Check cache first
     const cachedEntry = cacheRef.current.get(cacheKey);
     if (cachedEntry && isCacheValid(cachedEntry)) {
@@ -59,14 +71,29 @@ export function useCourseSearch() {
     setError(null);
 
     try {
-      const results = await searchCourses({
-        query: params.query.trim() || undefined,
-        department: params.filters.department !== "all" ? params.filters.department : undefined,
-        semester: params.filters.semester || undefined,
-        modality: params.filters.modality !== "all" ? params.filters.modality : undefined,
-        timeSlot: params.filters.timeSlot !== "all" ? params.filters.timeSlot : undefined,
-        limit: 50,
-      });
+      let results: CourseWithSections[];
+
+      if (shouldUseEnhancedSearch(params.query)) {
+        // Use backend API for enhanced/semantic search
+        const response = await searchCoursesAPI({
+          query: params.query.trim(),
+          department: params.filters.department !== "all" ? params.filters.department : undefined,
+          semester: params.filters.semester,
+          modality: params.filters.modality !== "all" ? params.filters.modality : undefined,
+          limit: 50,
+        });
+        results = response.courses;
+      } else {
+        // Use direct Supabase query for standard search
+        results = await searchCourses({
+          query: params.query.trim() || undefined,
+          department: params.filters.department !== "all" ? params.filters.department : undefined,
+          semester: params.filters.semester || undefined,
+          modality: params.filters.modality !== "all" ? params.filters.modality : undefined,
+          timeSlot: params.filters.timeSlot !== "all" ? params.filters.timeSlot : undefined,
+          limit: 50,
+        });
+      }
 
       // Update cache
       cacheRef.current.set(cacheKey, {
