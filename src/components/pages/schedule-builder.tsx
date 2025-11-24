@@ -51,7 +51,7 @@ export default function ScheduleBuilder() {
   const { courses, loading: coursesLoading } = useCourseSearch({
     query: searchQuery,
     department: filters.department !== "all" ? filters.department : undefined,
-    semester: "Fall 2025",
+    semester: "Current Semester",
     limit: 20,
   });
 
@@ -147,12 +147,12 @@ export default function ScheduleBuilder() {
         timestamp: new Date(),
         suggestedSchedule,
       };
-      
+
       setChatMessages((prev) => [...prev, aiMessage]);
-      
+
       // Update the calendar grid with AI-suggested schedule
       await updateFromAI(suggestedSchedule);
-      
+
       setIsAiThinking(false);
     }, 1500);
   };
@@ -195,7 +195,7 @@ export default function ScheduleBuilder() {
           {/* Course Search Tab */}
           <TabsContent value="search" className="space-y-6 mt-6">
             <CourseSearch onSearch={handleSearch} />
-            
+
             {coursesLoading ? (
               <div className="text-center py-12">
                 <div className="inline-block animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600"></div>
@@ -232,8 +232,8 @@ export default function ScheduleBuilder() {
           <TabsContent value="schedule" className="space-y-6 mt-6">
             <div className="flex items-center justify-between">
               <div>
-                <h2 className="text-2xl font-bold text-gray-900">Fall 2025 Schedule</h2>
-                <p className="text-gray-600">12 credits • 4 courses</p>
+                <h2 className="text-2xl font-bold text-gray-900">Current Semester Schedule</h2>
+                <p className="text-gray-600"></p>
               </div>
               <div className="flex gap-2">
                 <Button variant="outline">
@@ -246,7 +246,7 @@ export default function ScheduleBuilder() {
               </div>
             </div>
 
-            <ScheduleGrid 
+            <ScheduleGrid
               sections={sections}
               conflicts={conflicts}
               editable={true}
@@ -306,17 +306,15 @@ export default function ScheduleBuilder() {
                         className={`flex ${message.role === "user" ? "justify-end" : "justify-start"}`}
                       >
                         <div
-                          className={`max-w-[80%] rounded-lg p-3 ${
-                            message.role === "user"
-                              ? "bg-blue-600 text-white"
-                              : "bg-gray-100 text-gray-900"
-                          }`}
+                          className={`max-w-[80%] rounded-lg p-3 ${message.role === "user"
+                            ? "bg-blue-600 text-white"
+                            : "bg-gray-100 text-gray-900"
+                            }`}
                         >
                           <p className="text-sm whitespace-pre-wrap">{message.content}</p>
                           <p
-                            className={`text-xs mt-1 ${
-                              message.role === "user" ? "text-blue-100" : "text-gray-500"
-                            }`}
+                            className={`text-xs mt-1 ${message.role === "user" ? "text-blue-100" : "text-gray-500"
+                              }`}
                           >
                             {message.timestamp.toLocaleTimeString([], {
                               hour: "2-digit",
@@ -374,7 +372,7 @@ export default function ScheduleBuilder() {
                         Apply to My Schedule
                       </Button>
                     </div>
-                    
+
                     {/* Mini Calendar Grid */}
                     <div className="bg-white border rounded-lg overflow-hidden">
                       <div className="grid grid-cols-6 bg-gray-50 border-b">
