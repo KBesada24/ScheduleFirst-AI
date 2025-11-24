@@ -9,6 +9,35 @@ import { supabase } from "../../supabase/supabase";
 // API base URL - defaults to localhost for development
 const API_BASE_URL = import.meta.env.VITE_API_URL || "http://localhost:8000";
 
+// Timeout configuration
+const REQUEST_TIMEOUT = 30000; // 30 seconds
+const AI_REQUEST_TIMEOUT = 60000; // 60 seconds for AI operations
+
+// Fetch wrapper with timeout
+async function fetchWithTimeout(
+  url: string,
+  options: RequestInit = {},
+  timeout: number = REQUEST_TIMEOUT
+): Promise<Response> {
+  const controller = new AbortController();
+  const id = setTimeout(() => controller.abort(), timeout);
+
+  try {
+    const response = await fetch(url, {
+      ...options,
+      signal: controller.signal,
+    });
+    clearTimeout(id);
+    return response;
+  } catch (error) {
+    clearTimeout(id);
+    if (error instanceof Error && error.name === 'AbortError') {
+      throw new APIClientError('Request timeout', 'TIMEOUT', 408);
+    }
+    throw error;
+  }
+}
+
 export interface APIError {
   message: string;
   code?: string;
@@ -117,7 +146,7 @@ class APIClient {
       method: "GET",
     });
 
-    const response = await fetch(interceptedUrl, interceptedOptions);
+    const response = await fetchWithTimeout(interceptedUrl, interceptedOptions);
     return responseInterceptor(response);
   }
 
@@ -136,7 +165,7 @@ class APIClient {
       body: data ? JSON.stringify(data) : undefined,
     });
 
-    const response = await fetch(interceptedUrl, interceptedOptions);
+    const response = await fetchWithTimeout(interceptedUrl, interceptedOptions, AI_REQUEST_TIMEOUT);
     return responseInterceptor(response);
   }
 
@@ -155,7 +184,7 @@ class APIClient {
       body: data ? JSON.stringify(data) : undefined,
     });
 
-    const response = await fetch(interceptedUrl, interceptedOptions);
+    const response = await fetchWithTimeout(interceptedUrl, interceptedOptions);
     return responseInterceptor(response);
   }
 
@@ -172,7 +201,7 @@ class APIClient {
       method: "DELETE",
     });
 
-    const response = await fetch(interceptedUrl, interceptedOptions);
+    const response = await fetchWithTimeout(interceptedUrl, interceptedOptions);
     return responseInterceptor(response);
   }
 
@@ -191,13 +220,25 @@ class APIClient {
       body: data ? JSON.stringify(data) : undefined,
     });
 
-    const response = await fetch(interceptedUrl, interceptedOptions);
+    const response = await fetchWithTimeout(interceptedUrl, interceptedOptions);
     return responseInterceptor(response);
   }
 }
 
 // Export singleton instance
 export const apiClient = new APIClient();
+
+/**
+ * Check if backend is available
+ */
+export async function checkBackendHealth(): Promise<boolean> {
+  try {
+    const response = await apiClient.get('/health');
+    return response.status === 'healthy';
+  } catch {
+    return false;
+  }
+}
 
 // Export class for testing or custom instances
 export { APIClient };

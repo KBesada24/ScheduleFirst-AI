@@ -10,6 +10,8 @@ import { Card, CardContent } from "@/components/ui/card";
 import { Calendar, BookOpen, GraduationCap, Sparkles, MessageSquare, Send } from "lucide-react";
 import { useCourseSearch, useProfessorSearch } from "@/lib/supabase-hooks";
 import { useScheduleGrid } from "@/hooks/useScheduleGrid";
+import { OptimizeButton } from "@/components/ui/optimize-button";
+import { ScheduleOptimizationResponse } from "@/lib/api-endpoints";
 
 type Message = {
   id: string;
@@ -236,10 +238,17 @@ export default function ScheduleBuilder() {
                 <p className="text-gray-600"></p>
               </div>
               <div className="flex gap-2">
-                <Button variant="outline">
-                  <Sparkles className="h-4 w-4 mr-2" />
-                  AI Optimize
-                </Button>
+                <OptimizeButton
+                  courseCodes={sections.map(s => s.course_id)} // Using course_id as proxy for code for now
+                  semester="Fall 2025"
+                  university="Baruch College"
+                  onOptimized={(response: ScheduleOptimizationResponse) => {
+                    console.log("Optimization complete:", response);
+                    // Here we would update the schedule with the optimized result
+                    // For now, just log it
+                  }}
+                  className="bg-white text-black border border-input hover:bg-accent hover:text-accent-foreground"
+                />
                 <Button className="bg-blue-600 hover:bg-blue-700">
                   Save Schedule
                 </Button>

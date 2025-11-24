@@ -1,10 +1,10 @@
 import { useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Sparkles, Loader2 } from "lucide-react";
-import { 
-  optimizeSchedule, 
+import {
+  optimizeSchedule,
   ScheduleOptimizationRequest,
-  ScheduleOptimizationResponse 
+  ScheduleOptimizationResponse
 } from "@/lib/api-endpoints";
 import { useToast } from "@/components/ui/use-toast";
 import { Progress } from "@/components/ui/progress";
@@ -20,6 +20,7 @@ export interface ScheduleConstraints {
 interface OptimizeButtonProps {
   courseCodes: string[];
   semester?: string;
+  university?: string;
   constraints?: ScheduleConstraints;
   onOptimized: (response: ScheduleOptimizationResponse) => void;
   onError?: (error: Error) => void;
@@ -30,6 +31,7 @@ interface OptimizeButtonProps {
 export function OptimizeButton({
   courseCodes,
   semester = "Fall 2025",
+  university = "Baruch College",
   constraints,
   onOptimized,
   onError,
@@ -73,7 +75,7 @@ export function OptimizeButton({
     if (constraints.earliestStartTime && constraints.latestEndTime) {
       const earliest = new Date(`2000-01-01 ${constraints.earliestStartTime}`);
       const latest = new Date(`2000-01-01 ${constraints.latestEndTime}`);
-      
+
       if (earliest >= latest) {
         toast({
           title: "Invalid Time Range",
@@ -139,7 +141,7 @@ export function OptimizeButton({
     } catch (error) {
       clearInterval(progressInterval);
       const err = error instanceof Error ? error : new Error("Optimization failed");
-      
+
       if (onError) {
         onError(err);
       }
@@ -174,7 +176,7 @@ export function OptimizeButton({
           </>
         )}
       </Button>
-      
+
       {loading && progress > 0 && (
         <Progress value={progress} className="h-2" />
       )}

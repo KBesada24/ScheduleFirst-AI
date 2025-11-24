@@ -35,6 +35,7 @@ export interface ChatResponse {
 export interface ScheduleOptimizationRequest {
   courseCodes: string[];
   semester: string;
+  university?: string;
   constraints?: {
     preferredDays?: string[];
     earliestStartTime?: string;
@@ -76,6 +77,58 @@ export interface ProfessorDetails {
   grade_letter?: string;
   composite_score?: number;
   reviews?: any[];
+}
+
+export interface CourseSearchRequest {
+  query?: string;
+  department?: string;
+  semester?: string;
+  modality?: string;
+  timeSlot?: string;
+  limit?: number;
+  offset?: number;
+}
+
+export interface CourseWithSections {
+  id: string;
+  course_code: string;
+  title: string;
+  description?: string;
+  department?: string;
+  credits?: number;
+  sections?: any[];
+}
+
+export interface CourseSearchResponse {
+  courses: CourseWithSections[];
+  count: number;
+  searchType: 'exact' | 'semantic';
+}
+
+export interface TimeConflict {
+  type: string;
+  section1: string;
+  section2: string;
+  message: string;
+}
+
+export interface ScheduleValidationRequest {
+  scheduleId: string;
+  sectionId: string;
+  action: 'add' | 'remove';
+}
+
+export interface ScheduleValidationResponse {
+  valid: boolean;
+  conflicts: TimeConflict[];
+  warnings: string[];
+  suggestions: any[];
+}
+
+export interface AnalyticsEvent {
+  name: string;
+  properties?: Record<string, any>;
+  timestamp?: string;
 }
 
 // ============================================
@@ -129,7 +182,12 @@ export async function getChatHistory(userId: string) {
 export async function optimizeSchedule(
   request: ScheduleOptimizationRequest
 ): Promise<ScheduleOptimizationResponse> {
-  return apiClient.post("/api/schedule/optimize", request);
+  // Add default university
+  const requestWithDefaults = {
+    ...request,
+    university: request.university || 'Baruch College',
+  };
+  return apiClient.post("/api/schedule/optimize", requestWithDefaults);
 }
 
 /**
@@ -152,7 +210,7 @@ export async function getProfessorByNameAPI(
 ): Promise<ProfessorDetails> {
   const params = new URLSearchParams({ name });
   if (university) params.append("university", university);
-  
+
   return retryWithBackoff(
     () => apiClient.get(`/api/professor/${name}?${params.toString()}`),
     2
