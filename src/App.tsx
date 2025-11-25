@@ -4,6 +4,7 @@ import Dashboard from "./components/pages/dashboard";
 import ScheduleBuilder from "./components/pages/schedule-builder";
 import AdminPage from "./components/pages/admin";
 import SuccessPage from "./components/pages/success";
+import SettingsPage from "./components/pages/settings";
 // Add these imports
 import AuthLayout from "./components/auth/AuthLayout";
 import LoginForm from "./components/auth/LoginForm";
@@ -12,6 +13,7 @@ import { useAuth } from "../supabase/auth";
 import { Loader2 } from "lucide-react";
 import { useEffect } from "react";
 import { Toaster } from "./components/ui/toaster";
+import { UniversityOnboardingModal } from "./components/onboarding/UniversityOnboardingModal";
 
 /**
  * ProtectedRoute - Wrapper component for routes that require authentication
@@ -63,6 +65,7 @@ function AppRoutes() {
       <Route path="/schedule-builder" element={<ProtectedRoute><ScheduleBuilder /></ProtectedRoute>} />
       <Route path="/admin" element={<ProtectedRoute><AdminPage /></ProtectedRoute>} />
       <Route path="/success" element={<ProtectedRoute><SuccessPage /></ProtectedRoute>} />
+      <Route path="/settings" element={<ProtectedRoute><SettingsPage /></ProtectedRoute>} />
     </Routes>
   );
 }
@@ -71,6 +74,7 @@ export default function App() {
   return (
     <>
       <AppRoutes />
+      <UniversityOnboardingModal />
       <Toaster />
     </>
   );

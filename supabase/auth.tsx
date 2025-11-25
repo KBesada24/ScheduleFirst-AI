@@ -1,6 +1,8 @@
 import { createContext, useContext, useEffect, useState } from "react";
 import { User } from "@supabase/supabase-js";
 import { supabase } from "./supabase";
+import { UserProfile } from "../src/types/user";
+import { getOrCreateUserProfile, updateUserProfile } from "../src/lib/supabase-queries";
 
 type AuthContextType = {
   user: User | null;
@@ -10,12 +12,15 @@ type AuthContextType = {
   signUp: (email: string, password: string, fullName: string) => Promise<void>;
   signInWithGoogle: () => Promise<void>;
   signOut: () => Promise<void>;
+  profile: UserProfile | null;
+  updateUniversity: (university: string) => Promise<void>;
 };
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
 
 export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [user, setUser] = useState<User | null>(null);
+  const [profile, setProfile] = useState<UserProfile | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<Error | null>(null);
 
@@ -23,6 +28,9 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     // Check active sessions and sets the user
     supabase.auth.getSession().then(({ data: { session } }) => {
       setUser(session?.user ?? null);
+      if (session?.user && session.user.email) {
+        getOrCreateUserProfile(session.user.id, session.user.email).then(setProfile).catch(console.error);
+      }
       setLoading(false);
     });
 
@@ -31,6 +39,11 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       data: { subscription },
     } = supabase.auth.onAuthStateChange((_event, session) => {
       setUser(session?.user ?? null);
+      if (session?.user && session.user.email) {
+        getOrCreateUserProfile(session.user.id, session.user.email).then(setProfile).catch(console.error);
+      } else {
+        setProfile(null);
+      }
       setLoading(false);
     });
 
@@ -162,8 +175,19 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     }
   };
 
+  const updateUniversity = async (university: string) => {
+    if (!user) throw new Error("No user logged in");
+    try {
+      const updated = await updateUserProfile(user.id, { university: university as any });
+      setProfile(updated);
+    } catch (err) {
+      console.error("Error updating university:", err);
+      throw err;
+    }
+  };
+
   return (
-    <AuthContext.Provider value={{ user, loading, error, signIn, signUp, signInWithGoogle, signOut }}>
+    <AuthContext.Provider value={{ user, loading, error, signIn, signUp, signInWithGoogle, signOut, profile, updateUniversity }}>
       {children}
     </AuthContext.Provider>
   );

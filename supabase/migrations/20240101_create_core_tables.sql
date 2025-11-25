@@ -79,17 +79,31 @@ CREATE TABLE IF NOT EXISTS user_schedules (
   updated_at TIMESTAMP DEFAULT NOW()
 );
 
-CREATE INDEX idx_courses_code ON courses(course_code);
-CREATE INDEX idx_courses_semester ON courses(semester);
-CREATE INDEX idx_courses_university ON courses(university);
-CREATE INDEX idx_sections_professor ON course_sections(professor_id);
-CREATE INDEX idx_sections_professor_name ON course_sections(professor_name);
-CREATE INDEX idx_sections_time ON course_sections(days, start_time);
-CREATE INDEX idx_professors_name ON professors(name);
-CREATE INDEX idx_reviews_professor ON professor_reviews(professor_id);
-CREATE INDEX idx_schedules_user ON user_schedules(user_id);
+CREATE INDEX IF NOT EXISTS idx_courses_code ON courses(course_code);
+CREATE INDEX IF NOT EXISTS idx_courses_semester ON courses(semester);
+CREATE INDEX IF NOT EXISTS idx_courses_university ON courses(university);
+CREATE INDEX IF NOT EXISTS idx_sections_professor ON course_sections(professor_id);
+CREATE INDEX IF NOT EXISTS idx_sections_professor_name ON course_sections(professor_name);
+CREATE INDEX IF NOT EXISTS idx_sections_time ON course_sections(days, start_time);
+CREATE INDEX IF NOT EXISTS idx_professors_name ON professors(name);
+CREATE INDEX IF NOT EXISTS idx_reviews_professor ON professor_reviews(professor_id);
+CREATE INDEX IF NOT EXISTS idx_schedules_user ON user_schedules(user_id);
 
-alter publication supabase_realtime add table courses;
-alter publication supabase_realtime add table course_sections;
-alter publication supabase_realtime add table professors;
-alter publication supabase_realtime add table user_schedules;
+DO $$
+BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_publication_tables WHERE pubname = 'supabase_realtime' AND tablename = 'courses') THEN
+    ALTER PUBLICATION supabase_realtime ADD TABLE courses;
+  END IF;
+  
+  IF NOT EXISTS (SELECT 1 FROM pg_publication_tables WHERE pubname = 'supabase_realtime' AND tablename = 'course_sections') THEN
+    ALTER PUBLICATION supabase_realtime ADD TABLE course_sections;
+  END IF;
+
+  IF NOT EXISTS (SELECT 1 FROM pg_publication_tables WHERE pubname = 'supabase_realtime' AND tablename = 'professors') THEN
+    ALTER PUBLICATION supabase_realtime ADD TABLE professors;
+  END IF;
+
+  IF NOT EXISTS (SELECT 1 FROM pg_publication_tables WHERE pubname = 'supabase_realtime' AND tablename = 'user_schedules') THEN
+    ALTER PUBLICATION supabase_realtime ADD TABLE user_schedules;
+  END IF;
+END $$;

@@ -12,6 +12,7 @@ import { useCourseSearch, useProfessorSearch } from "@/lib/supabase-hooks";
 import { useScheduleGrid } from "@/hooks/useScheduleGrid";
 import { OptimizeButton } from "@/components/ui/optimize-button";
 import { ScheduleOptimizationResponse, sendChatMessage } from "@/lib/api-endpoints";
+import { useAuth } from "../../../supabase/auth";
 
 type Message = {
   id: string;
@@ -39,6 +40,7 @@ export default function ScheduleBuilder() {
   ]);
   const [chatInput, setChatInput] = useState("");
   const [isAiThinking, setIsAiThinking] = useState(false);
+  const { profile } = useAuth();
   const chatEndRef = useRef<HTMLDivElement>(null);
 
   // Schedule grid management
@@ -54,12 +56,14 @@ export default function ScheduleBuilder() {
     query: searchQuery,
     department: filters.department !== "all" ? filters.department : undefined,
     semester: "Current Semester",
+    university: profile?.university || undefined,
     limit: 20,
   });
 
   // Fetch top professors
   const { professors, loading: professorsLoading } = useProfessorSearch({
     limit: 10,
+    university: profile?.university || undefined,
   });
 
   const handleSearch = (query: string, newFilters: any) => {
@@ -148,6 +152,12 @@ export default function ScheduleBuilder() {
           <p className="text-lg text-gray-600">
             AI-Powered Course Scheduling for CUNY Students
           </p>
+          {/* University Display */}
+          <div className="flex items-center justify-center gap-2">
+            <span className="text-sm font-medium text-gray-700">
+              School: <span className="font-bold text-blue-600">{profile?.university || "Not set"}</span>
+            </span>
+          </div>
         </div>
 
         {/* Main Tabs */}
@@ -493,7 +503,7 @@ export default function ScheduleBuilder() {
                       average_difficulty: prof.average_difficulty || 0,
                       review_count: prof.review_count || 0,
                       department: prof.department || "Unknown",
-                      university: prof.university || "CUNY",
+                      university: profile?.university || "Baruch College",
                     }}
                   />
                 ))}

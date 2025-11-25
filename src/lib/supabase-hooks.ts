@@ -20,8 +20,8 @@ import {
   type UserSchedule,
   type ScheduleWithSections,
   type TimeConflict,
-  type User,
 } from "./supabase-queries";
+import { UserProfile } from "../types/user";
 
 // ============================================
 // COURSE HOOKS
@@ -33,6 +33,7 @@ export function useCourseSearch(params: {
   semester?: string;
   modality?: string;
   timeSlot?: string;
+  university?: string;
   limit?: number;
 }) {
   const [courses, setCourses] = useState<CourseWithSections[]>([]);
@@ -54,7 +55,7 @@ export function useCourseSearch(params: {
 
   useEffect(() => {
     search();
-  }, [params.query, params.department, params.semester, params.modality, params.timeSlot]);
+  }, [params.query, params.department, params.semester, params.modality, params.timeSlot, params.university]);
 
   return { courses, loading, error, refetch: search };
 }
@@ -310,7 +311,7 @@ export function useCreateSchedule() {
 // ============================================
 
 export function useUserProfile(userId: string | null, email?: string) {
-  const [user, setUser] = useState<User | null>(null);
+  const [user, setUser] = useState<UserProfile | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<Error | null>(null);
 
@@ -337,6 +338,7 @@ export function useUserProfile(userId: string | null, email?: string) {
     name?: string;
     major?: string;
     graduation_year?: number;
+    university?: string;
     preferences?: any;
   }) => {
     if (!userId) throw new Error("No user ID");

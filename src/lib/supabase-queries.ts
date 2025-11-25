@@ -1,4 +1,5 @@
 import { supabase } from "../../supabase/supabase";
+import { UserProfile } from "../types/user";
 
 // ============================================
 // COURSE QUERIES
@@ -47,6 +48,7 @@ export async function searchCourses(params: {
   semester?: string;
   modality?: string;
   timeSlot?: string;
+  university?: string; // Added
   limit?: number;
   offset?: number;
 }) {
@@ -68,6 +70,10 @@ export async function searchCourses(params: {
 
   if (params.semester) {
     query = query.eq("semester", params.semester);
+  }
+
+  if (params.university) {
+    query = query.eq("university", params.university);
   }
 
   if (params.limit) {
@@ -517,16 +523,7 @@ export async function checkScheduleConflicts(sectionIds: string[]): Promise<Time
 // USER QUERIES
 // ============================================
 
-export interface User {
-  id: string;
-  email: string;
-  name: string | null;
-  major: string | null;
-  graduation_year: number | null;
-  preferences: any;
-  created_at: string;
-  updated_at: string;
-}
+// User interface removed, using UserProfile from ../types/user
 
 // Get or create user profile
 export async function getOrCreateUserProfile(userId: string, email: string) {
@@ -536,7 +533,7 @@ export async function getOrCreateUserProfile(userId: string, email: string) {
     .eq("id", userId)
     .single();
 
-  if (existing) return existing as User;
+  if (existing) return existing as UserProfile;
 
   const { data, error } = await supabase
     .from("users")
@@ -548,7 +545,7 @@ export async function getOrCreateUserProfile(userId: string, email: string) {
     .single();
 
   if (error) throw error;
-  return data as User;
+  return data as UserProfile;
 }
 
 // Update user profile
@@ -558,6 +555,7 @@ export async function updateUserProfile(
     name?: string;
     major?: string;
     graduation_year?: number;
+    university?: string;
     preferences?: any;
   }
 ) {
@@ -572,7 +570,7 @@ export async function updateUserProfile(
     .single();
 
   if (error) throw error;
-  return data as User;
+  return data as UserProfile;
 }
 
 // ============================================
