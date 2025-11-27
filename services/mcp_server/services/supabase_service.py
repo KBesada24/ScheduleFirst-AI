@@ -4,7 +4,7 @@ Handles all database operations via Supabase client
 """
 from typing import List, Optional, Dict, Any, cast
 from uuid import UUID
-from datetime import datetime
+from datetime import datetime, timedelta
 
 from supabase import create_client, Client
 from postgrest.exceptions import APIError
@@ -13,6 +13,7 @@ from ..config import settings
 from ..models.course import Course, CourseSection, CourseCreate, CourseSectionCreate, CourseSearchFilter
 from ..models.professor import Professor, ProfessorReview, ProfessorCreate, ProfessorReviewCreate
 from ..models.schedule import UserSchedule, UserScheduleCreate
+from ..models.sync_metadata import SyncMetadata
 from ..utils.logger import get_logger
 
 
@@ -381,18 +382,91 @@ class SupabaseService:
     
     async def update_sync_timestamp(self, semester: str) -> bool:
         """Update the last sync timestamp for a semester"""
+        # Deprecated: Use update_sync_metadata instead
         try:
             self.client.table("sync_logs").insert({
                 "semester": semester,
                 "timestamp": datetime.now().isoformat(),
                 "status": "completed"
             }).execute()
-            
             return True
-        
         except APIError as e:
             logger.error(f"Error updating sync timestamp: {e}")
             return False
+
+    # ============ Sync Metadata Operations ============
+
+    async def get_sync_metadata(
+        self, 
+        entity_type: str, 
+        semester: str, 
+        university: str
+    ) -> Optional[SyncMetadata]:
+        """Get sync metadata record"""
+        try:
+            response = self.client.table("sync_metadata").select("*").eq(
+                "entity_type", entity_type
+            ).eq("semester", semester).eq("university", university).execute()
+            
+            if response.data:
+                data = cast(Dict[str, Any], response.data[0])
+                return SyncMetadata(**data)
+            return None
+        except APIError as e:
+            logger.error(f"Error fetching sync metadata: {e}")
+            return None
+
+    async def update_sync_metadata(
+        self,
+        entity_type: str,
+        semester: str,
+        university: str,
+        status: str,
+        error: Optional[str] = None
+    ) -> bool:
+        """Update or create sync metadata record"""
+        try:
+            data = {
+                "entity_type": entity_type,
+                "semester": semester,
+                "university": university,
+                "sync_status": status,
+                "last_sync": datetime.now().isoformat(),
+                "error_message": error
+            }
+            
+            # Upsert based on unique constraint (entity_type, semester, university)
+            # Note: You might need to add a unique constraint in DB if not exists
+            # For now assuming the index we created helps, but upsert needs a constraint name or columns
+            # If no unique constraint, we might need to check existence first or use ID
+            
+            # Try to find existing first to get ID
+            existing = await self.get_sync_metadata(entity_type, semester, university)
+            
+            if existing:
+                self.client.table("sync_metadata").update(data).eq("id", str(existing.id)).execute()
+            else:
+                self.client.table("sync_metadata").insert(data).execute()
+                
+            return True
+        except APIError as e:
+            logger.error(f"Error updating sync metadata: {e}")
+            return False
+
+    async def get_stale_entities(self, entity_type: str, ttl_seconds: int) -> List[Dict[str, Any]]:
+        """Find stale sync records"""
+        try:
+            # Calculate cutoff time
+            cutoff = datetime.now() - timedelta(seconds=ttl_seconds)
+            
+            response = self.client.table("sync_metadata").select("*").eq(
+                "entity_type", entity_type
+            ).lt("last_sync", cutoff.isoformat()).execute()
+            
+            return cast(List[Dict[str, Any]], response.data)
+        except APIError as e:
+            logger.error(f"Error fetching stale entities: {e}")
+            return []
     
     async def health_check(self) -> bool:
         """Check if database connection is healthy"""

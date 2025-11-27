@@ -33,6 +33,7 @@ class Professor(ProfessorBase):
     """Full professor model with database fields"""
     id: UUID = Field(default_factory=uuid4)
     last_updated: Optional[datetime] = Field(None)
+    data_source: Optional[str] = Field(default="manual", description="Source of data: manual, ratemyprof, etc.")
     created_at: datetime = Field(default_factory=datetime.now)
     
     model_config = ConfigDict(from_attributes=True)
