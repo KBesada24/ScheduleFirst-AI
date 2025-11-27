@@ -12,60 +12,110 @@ from ...mcp_server.utils.logger import get_logger
 logger = get_logger(__name__)
 
 
-async def sync_courses_job():
-    """Sync courses from CUNY Global Search"""
+async def sync_courses_job(
+    semester: Optional[str] = None, 
+    university: Optional[str] = None,
+    force: bool = False
+) -> Dict[str, Any]:
+    """
+    Sync courses from CUNY Global Search
+    
+    Args:
+        semester: Optional specific semester to sync
+        university: Optional specific university to sync (not used by scraper yet, but good for future)
+        force: Force sync even if fresh (handled by caller usually)
+    """
     logger.info("=" * 60)
-    logger.info("STARTING: CUNY Course Sync Job")
+    logger.info(f"STARTING: CUNY Course Sync Job (Semester: {semester or 'All'})")
     logger.info("=" * 60)
     
     start_time = datetime.now()
     
     try:
         # Determine semesters to sync
-        semesters = _get_semesters_to_sync()
+        if semester:
+            semesters = [semester]
+        else:
+            semesters = _get_semesters_to_sync()
+            
         logger.info(f"Syncing {len(semesters)} semesters: {', '.join(semesters)}")
         
         total_courses = 0
         total_sections = 0
+        errors = []
         
-        for semester in semesters:
-            logger.info(f"Syncing semester: {semester}")
+        for sem in semesters:
+            logger.info(f"Syncing semester: {sem}")
             
-            # Scrape courses
-            courses = await cuny_scraper.scrape_semester_courses(semester)
-            
-            if not courses:
-                logger.warning(f"No courses found for {semester}")
-                continue
-            
-            # Prepare data for bulk insert
-            courses_data = []
-            sections_data = []
-            
-            for course in courses:
-                # Extract sections
-                sections = course.pop('sections', [])
+            try:
+                # Scrape courses
+                # Note: cuny_scraper currently scrapes all universities for a semester
+                # If we want to filter by university, we'd need to update the scraper or filter results here
+                courses = await cuny_scraper.scrape_semester_courses(sem)
                 
-                courses_data.append(course)
+                if not courses:
+                    logger.warning(f"No courses found for {sem}")
+                    continue
                 
-                # Add course_id to sections (will be resolved after insert)
-                for section in sections:
-                    sections_data.append(section)
-            
-            # Insert courses
-            courses_inserted = await supabase_service.insert_courses(courses_data)
-            logger.info(f"Inserted {courses_inserted} courses for {semester}")
-            
-            # Insert sections
-            if sections_data:
-                sections_inserted = await supabase_service.insert_sections(sections_data)
-                logger.info(f"Inserted {sections_inserted} sections for {semester}")
-                total_sections += sections_inserted
-            
-            total_courses += courses_inserted
-            
-            # Update sync timestamp
-            await supabase_service.update_sync_timestamp(semester)
+                # Filter by university if specified
+                if university:
+                    courses = [c for c in courses if c.get('university') == university]
+                    if not courses:
+                        logger.info(f"No courses found for {university} in {sem}")
+                        continue
+                
+                # Prepare data for bulk insert
+                courses_data = []
+                sections_data = []
+                
+                for course in courses:
+                    # Extract sections
+                    sections = course.pop('sections', [])
+                    
+                    courses_data.append(course)
+                    
+                    # Add course_id to sections (will be resolved after insert)
+                    for section in sections:
+                        sections_data.append(section)
+                
+                # Insert courses
+                courses_inserted = await supabase_service.insert_courses(courses_data)
+                logger.info(f"Inserted {courses_inserted} courses for {sem}")
+                
+                # Insert sections
+                if sections_data:
+                    sections_inserted = await supabase_service.insert_sections(sections_data)
+                    logger.info(f"Inserted {sections_inserted} sections for {sem}")
+                    total_sections += sections_inserted
+                
+                total_courses += courses_inserted
+                
+                # Update sync metadata
+                # We update for the specific university if provided, or "all" (or iterate all unis?)
+                # For now, if university is None, we assume we synced all universities for this semester
+                target_uni = university or "all" 
+                # Ideally we should update metadata for each university found in the data
+                # But for simplicity/MVP:
+                
+                # If we synced all, we might want to mark all unis as synced? 
+                # Or just use a special "all" marker? 
+                # The DataFreshnessService checks specific university.
+                
+                # Let's extract unique universities from the data and mark them
+                synced_unis = set(c.get('university') for c in courses_data)
+                for uni in synced_unis:
+                     await supabase_service.update_sync_metadata(
+                        "courses", sem, uni, "success"
+                    )
+                
+            except Exception as e:
+                logger.error(f"Error syncing semester {sem}: {e}")
+                errors.append(f"{sem}: {str(e)}")
+                # Mark as failed
+                target_uni = university or "all" # This is imperfect but...
+                await supabase_service.update_sync_metadata(
+                    "courses", sem, target_uni, "failed", str(e)
+                )
         
         duration = (datetime.now() - start_time).total_seconds()
         
@@ -77,10 +127,11 @@ async def sync_courses_job():
         logger.info("=" * 60)
         
         return {
-            'success': True,
+            'success': len(errors) == 0,
             'courses_synced': total_courses,
             'sections_synced': total_sections,
-            'duration_seconds': duration
+            'duration_seconds': duration,
+            'errors': errors
         }
     
     except Exception as e:
