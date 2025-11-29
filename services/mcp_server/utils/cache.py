@@ -16,42 +16,88 @@ logger = get_logger(__name__)
 
 
 class InMemoryCache:
-    """Simple in-memory cache with TTL support"""
+    """Simple in-memory cache with TTL and LRU support"""
     
-    def __init__(self, default_ttl: int = 3600):
+    def __init__(self, default_ttl: int = 3600, max_size: int = 1000):
         self._cache: dict[str, tuple[Any, datetime]] = {}
+        self._access_order: list[str] = []  # Track access order for LRU
         self.default_ttl = default_ttl
+        self.max_size = max_size
         self._lock = asyncio.Lock()
+        
+        # Statistics
+        self._stats = {
+            "hits": 0,
+            "misses": 0,
+            "evictions": 0,
+            "sets": 0
+        }
     
     async def get(self, key: str) -> Optional[Any]:
         """Get value from cache if not expired"""
         async with self._lock:
             if key not in self._cache:
+                self._stats["misses"] += 1
                 return None
             
             value, expiry = self._cache[key]
             
             if datetime.now() > expiry:
                 del self._cache[key]
+                if key in self._access_order:
+                    self._access_order.remove(key)
+                self._stats["misses"] += 1
                 return None
             
+            # Update access order (move to end)
+            if key in self._access_order:
+                self._access_order.remove(key)
+            self._access_order.append(key)
+            
+            self._stats["hits"] += 1
             return value
     
     async def set(self, key: str, value: Any, ttl: Optional[int] = None) -> None:
         """Set value in cache with TTL"""
         async with self._lock:
+            # Check size limit and evict if needed
+            if len(self._cache) >= self.max_size and key not in self._cache:
+                await self._evict_lru()
+            
             expiry = datetime.now() + timedelta(seconds=ttl or self.default_ttl)
             self._cache[key] = (value, expiry)
+            
+            # Update access order
+            if key in self._access_order:
+                self._access_order.remove(key)
+            self._access_order.append(key)
+            
+            self._stats["sets"] += 1
+            
+    async def _evict_lru(self) -> None:
+        """Evict least recently used item"""
+        if not self._access_order:
+            return
+            
+        lru_key = self._access_order.pop(0)
+        if lru_key in self._cache:
+            del self._cache[lru_key]
+            self._stats["evictions"] += 1
+            logger.debug(f"Evicted LRU key: {lru_key}")
     
     async def delete(self, key: str) -> None:
         """Delete value from cache"""
         async with self._lock:
             self._cache.pop(key, None)
+            if key in self._access_order:
+                self._access_order.remove(key)
     
     async def clear(self) -> None:
         """Clear all cache"""
         async with self._lock:
             self._cache.clear()
+            self._access_order.clear()
+            # Reset stats? Maybe keep them. Let's keep them for now.
     
     async def cleanup_expired(self) -> int:
         """Remove expired entries and return count"""
@@ -64,6 +110,8 @@ class InMemoryCache:
             
             for key in expired_keys:
                 del self._cache[key]
+                if key in self._access_order:
+                    self._access_order.remove(key)
             
             return len(expired_keys)
     
@@ -71,7 +119,9 @@ class InMemoryCache:
         """Get cache statistics"""
         return {
             "total_entries": len(self._cache),
+            "max_size": self.max_size,
             "default_ttl": self.default_ttl,
+            **self._stats
         }
 
 
@@ -82,7 +132,7 @@ class CacheManager:
         self._cache = InMemoryCache(default_ttl=settings.cache_ttl)
         logger.info(f"Cache initialized with TTL: {settings.cache_ttl}s")
     
-    def _generate_key(self, prefix: str, *args: Any, **kwargs: Any) -> str:
+    def generate_key(self, prefix: str, *args: Any, **kwargs: Any) -> str:
         """Generate cache key from function arguments"""
         key_data = {
             "args": args,
@@ -122,6 +172,19 @@ class CacheManager:
         if count > 0:
             logger.info(f"Cleaned up {count} expired cache entries")
         return count
+        
+    def get_stats(self) -> dict[str, Any]:
+        """Get cache statistics"""
+        return self._cache.get_stats()
+        
+    async def warm_cache(self, entity_type: str, **kwargs: Any) -> int:
+        """
+        Pre-populate cache for specific entities.
+        To be implemented by specific services or a central warming logic.
+        Returns number of entries warmed.
+        """
+        # This is a placeholder for future implementation
+        return 0
     
     def cached(
         self,
@@ -137,7 +200,7 @@ class CacheManager:
                 if key_func:
                     cache_key = f"{prefix}:{key_func(*args, **kwargs)}"
                 else:
-                    cache_key = self._generate_key(prefix, *args, **kwargs)
+                    cache_key = self.generate_key(prefix, *args, **kwargs)
                 
                 # Try to get from cache
                 cached_value = await self.get(cache_key)

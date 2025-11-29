@@ -1,0 +1,86 @@
+============================= test session starts ==============================
+platform linux -- Python 3.14.0, pytest-9.0.1, pluggy-1.6.0
+rootdir: /home/kbesada/Code/ScheduleFirst-AI/services
+configfile: pyproject.toml
+plugins: cov-7.0.0, asyncio-1.3.0, anyio-4.11.0, mock-3.15.1
+asyncio: mode=Mode.AUTO, debug=False, asyncio_default_fixture_loop_scope=None, asyncio_default_test_loop_scope=function
+collected 2 items
+
+mcp_server/tests/test_caching_integration.py F.                          [100%]
+
+=================================== FAILURES ===================================
+________________________ test_supabase_service_caching _________________________
+
+    @pytest.mark.asyncio
+    async def test_supabase_service_caching():
+        # Clear cache
+        await cache_manager.clear()
+    
+        # Mock the client execution
+        mock_execute = MagicMock()
+        mock_execute.execute.return_value.data = [{"course_code": "CSC101", "semester": "Fall 2025", "university": "CUNY"}]
+    
+        # Mock the chain: table().select().eq()...execute()
+        # This is complex to mock perfectly, so we'll mock the internal client attribute if possible
+        # Or better, we'll patch the client on the service instance
+    
+        with patch.object(supabase_service, 'client') as mock_client:
+            # Setup mock chain
+            mock_builder = MagicMock()
+            mock_builder.execute.return_value.data = [{"course_code": "CSC101", "semester": "Fall 2025", "university": "CUNY"}]
+    
+            # Make the builder return itself for chained calls
+            mock_builder.select.return_value = mock_builder
+            mock_builder.eq.return_value = mock_builder
+            mock_builder.ilike.return_value = mock_builder
+    
+            # Connect table() to builder
+            mock_client.table.return_value = mock_builder
+    
+            # First call - should hit DB
+>           courses1 = await supabase_service.get_courses_by_semester("Fall 2025", "CUNY")
+                       ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+mcp_server/tests/test_caching_integration.py:35: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+mcp_server/utils/cache.py:211: in wrapper
+    result = await func(*args, **kwargs)
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+self = <mcp_server.services.supabase_service.SupabaseService object at 0xf6b59b8a2e40>
+semester = 'Fall 2025', university = 'CUNY'
+
+    @cache_manager.cached(prefix="courses:list", ttl=300)
+    async def get_courses_by_semester(self, semester: str, university: Optional[str] = None) -> List[Course]:
+        """Get all courses for a given semester"""
+        try:
+            query = self.client.table("courses").select("*").eq("semester", semester)
+    
+            if university:
+                query = query.eq("university", university)
+    
+            response = query.execute()
+            courses = cast(List[Dict[str, Any]], response.data)
+>           return [Course(**course) for course in courses]
+                    ^^^^^^^^^^^^^^^^
+E           pydantic_core._pydantic_core.ValidationError: 1 validation error for Course
+E           name
+E             Field required [type=missing, input_value={'course_code': 'CSC101',...', 'university': 'CUNY'}, input_type=dict]
+E               For further information visit https://errors.pydantic.dev/2.12/v/missing
+
+mcp_server/services/supabase_service.py:48: ValidationError
+----------------------------- Captured stdout call -----------------------------
+{"timestamp": "2025-11-29T19:08:01.544577", "level": "INFO", "logger": "mcp_server.utils.cache", "message": "Cache cleared", "module": "cache", "function": "clear", "line": 167, "taskName": "Task-1"}
+------------------------------ Captured log call -------------------------------
+INFO     mcp_server.utils.cache:cache.py:167 Cache cleared
+=============================== warnings summary ===============================
+mcp_server/utils/logger.py:19: 7 warnings
+mcp_server/tests/test_caching_integration.py: 4 warnings
+  /home/kbesada/Code/ScheduleFirst-AI/services/mcp_server/utils/logger.py:19: DeprecationWarning: datetime.datetime.utcnow() is deprecated and scheduled for removal in a future version. Use timezone-aware objects to represent datetimes in UTC: datetime.datetime.now(datetime.UTC).
+    "timestamp": datetime.utcnow().isoformat(),
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+=========================== short test summary info ============================
+FAILED mcp_server/tests/test_caching_integration.py::test_supabase_service_caching
+=================== 1 failed, 1 passed, 11 warnings in 1.18s ===================

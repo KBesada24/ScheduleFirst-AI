@@ -14,7 +14,9 @@ from ..models.course import Course, CourseSection, CourseCreate, CourseSectionCr
 from ..models.professor import Professor, ProfessorReview, ProfessorCreate, ProfessorReviewCreate
 from ..models.schedule import UserSchedule, UserScheduleCreate
 from ..models.sync_metadata import SyncMetadata
+from ..models.sync_metadata import SyncMetadata
 from ..utils.logger import get_logger
+from ..utils.cache import cache_manager
 
 
 logger = get_logger(__name__)
@@ -32,6 +34,7 @@ class SupabaseService:
     
     # ============ Course Operations ============
     
+    @cache_manager.cached(prefix="courses:list", ttl=300)
     async def get_courses_by_semester(self, semester: str, university: Optional[str] = None) -> List[Course]:
         """Get all courses for a given semester"""
         try:
@@ -48,6 +51,7 @@ class SupabaseService:
             logger.error(f"Error fetching courses: {e}")
             return []
     
+    @cache_manager.cached(prefix="courses:detail", ttl=300)
     async def get_course_by_code(self, course_code: str, semester: str, university: str) -> Optional[Course]:
         """Get a specific course by code"""
         try:
@@ -210,6 +214,7 @@ class SupabaseService:
     
     # ============ Professor Operations ============
     
+    @cache_manager.cached(prefix="professors:name", ttl=300)
     async def get_professor_by_name(self, name: str, university: str) -> Optional[Professor]:
         """Get professor by name and university"""
         try:
@@ -226,6 +231,7 @@ class SupabaseService:
             logger.error(f"Error fetching professor {name}: {e}")
             return None
     
+    @cache_manager.cached(prefix="professors:id", ttl=300)
     async def get_professor_by_id(self, professor_id: UUID) -> Optional[Professor]:
         """Get professor by ID"""
         try:
@@ -302,6 +308,7 @@ class SupabaseService:
     
     # ============ Professor Review Operations ============
     
+    @cache_manager.cached(prefix="reviews:list", ttl=300)
     async def get_reviews_by_professor(self, professor_id: UUID) -> List[ProfessorReview]:
         """Get all reviews for a professor"""
         try:
@@ -412,6 +419,7 @@ class SupabaseService:
 
     # ============ Sync Metadata Operations ============
 
+    @cache_manager.cached(prefix="sync:metadata", ttl=60)
     async def get_sync_metadata(
         self, 
         entity_type: str, 

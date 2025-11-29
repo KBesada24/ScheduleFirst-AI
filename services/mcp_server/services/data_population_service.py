@@ -9,6 +9,7 @@ from uuid import UUID
 from ..utils.logger import get_logger
 from .data_freshness_service import data_freshness_service
 from .supabase_service import supabase_service
+from ..utils.cache import cache_manager
 
 # Import background jobs
 # Note: Using absolute imports since background_jobs is a sibling package to mcp_server
@@ -39,6 +40,13 @@ class DataPopulationService:
         If missing or stale, triggers sync job.
         """
         try:
+            # Check cache for recent success
+            cache_key = f"population:courses:{semester}:{university}"
+            if not force:
+                cached_result = await cache_manager.get(cache_key)
+                if cached_result:
+                    return True
+
             # Check freshness if not forced
             if not force and await data_freshness_service.is_course_data_fresh(semester, university):
                 return True
@@ -60,6 +68,7 @@ class DataPopulationService:
                 result = await sync_courses_job(semester=semester, university=university)
                 
                 if result.get("success"):
+                    await cache_manager.set(cache_key, True, ttl=60)
                     return True
                 else:
                     logger.error(f"Course sync failed: {result.get('error')}")
@@ -79,6 +88,13 @@ class DataPopulationService:
         Ensure professor data (reviews and grades) exists.
         """
         try:
+            # Check cache for recent success
+            cache_key = f"population:professor:{professor_name}:{university}"
+            if not force:
+                cached_result = await cache_manager.get(cache_key)
+                if cached_result:
+                    return True
+
             # Check if professor exists first
             professor = await supabase_service.get_professor_by_name(professor_name, university)
             
@@ -117,7 +133,10 @@ class DataPopulationService:
                 # 2. Update grades
                 grade_result = await update_grades_job(professor_id=professor.id)
                 
-                return grade_result.get("success", False)
+                success = grade_result.get("success", False)
+                if success:
+                    await cache_manager.set(cache_key, True, ttl=60)
+                return success
 
         except Exception as e:
             logger.error(f"Error ensuring professor data: {e}")
