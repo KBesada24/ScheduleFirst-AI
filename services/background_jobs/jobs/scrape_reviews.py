@@ -50,18 +50,60 @@ async def scrape_reviews_job(
             if professor_name and university == uni:
                 # If specific professor requested
                 prof = await supabase_service.get_professor_by_name(professor_name, uni)
-                professors = [prof] if prof else []
-                if not professors:
-                    logger.warning(f"Professor {professor_name} not found in DB for {uni}")
-                    # Try to scrape anyway? No, we need DB record to link reviews
-                    # Actually, if we are scraping to populate, maybe we should create the prof record?
-                    # For now, assume prof record exists (created by course sync)
+                
+                if prof:
+                    professors = [prof]
+                else:
+                    # Professor not in DB, try to scrape and create
+                    logger.info(f"Professor {professor_name} not found in DB, attempting to scrape and create")
+                    try:
+                        # Scrape professor data
+                        prof_data = await ratemyprof_scraper.scrape_professor_data(
+                            professor_name,
+                            uni
+                        )
+                        
+                        if prof_data:
+                            # Create new professor
+                            from ...mcp_server.models.professor import ProfessorCreate
+                            prof_info = prof_data['professor']
+                            
+                            new_prof = await supabase_service.insert_professor(
+                                ProfessorCreate(
+                                    name=professor_name,
+                                    university=uni,
+                                    department=prof_info.get('department', 'Unknown'),
+                                    ratemyprof_id=prof_info.get('legacyId'),
+                                    average_rating=prof_info.get('avgRating'),
+                                    average_difficulty=prof_info.get('avgDifficulty'),
+                                    review_count=prof_info.get('numRatings')
+                                )
+                            )
+                            
+                            if new_prof:
+                                logger.info(f"Created new professor record for {professor_name}")
+                                professors = [new_prof]
+                            else:
+                                logger.error(f"Failed to create professor record for {professor_name}")
+                                professors = []
+                        else:
+                            logger.warning(f"Professor {professor_name} not found on RateMyProfessors")
+                            professors = []
+                    except Exception as e:
+                        logger.error(f"Error scraping/creating professor {professor_name}: {e}")
+                        professors = []
             else:
                 professors = await supabase_service.get_professors_by_university(uni)
             
             for professor in professors:
                 try:
-                    # Scrape reviews
+                    # Scrape reviews (if we just created the prof, we technically already scraped, 
+                    # but ratemyprof_scraper might not cache the full response or we might need to re-parse.
+                    # Ideally we should pass the already scraped data if available, but for simplicity/robustness
+                    # we'll call scrape again (it should be cached by the scraper service if implemented, 
+                    # or we can optimize later). 
+                    # Actually, let's just call scrape again to keep the loop clean.
+                    
                     prof_data = await ratemyprof_scraper.scrape_professor_data(
                         professor.name,
                         uni
@@ -92,11 +134,6 @@ async def scrape_reviews_job(
                     
                     total_professors += 1
                     logger.debug(f"Scraped {len(reviews)} reviews for {professor.name}")
-                    
-                    # Update sync metadata for this professor
-                    # Note: We don't have a per-professor sync metadata table yet
-                    # But we update the professor's last_updated field in the model/DB
-                    # We can also update the 'reviews' entity type in sync_metadata for the university
                     
                 except Exception as e:
                     logger.error(f"Error scraping {professor.name}: {e}")

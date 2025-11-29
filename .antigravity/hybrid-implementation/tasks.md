@@ -4,70 +4,70 @@
 
 ### Task 1.1: Database Schema Updates
 
-- [ ] Create migration script for new fields
-  - [ ] Add `last_scraped` to `courses` table
-  - [ ] Add `is_stale` boolean to `courses` table
-  - [ ] Add `last_updated` to `professors` table
-  - [ ] Add `data_source` to `professors` table
-- [ ] Create `sync_metadata` table
-  - [ ] Define schema with entity_type, semester, university, last_sync, sync_status
-  - [ ] Add appropriate indexes
-- [ ] Create database indexes
-  - [ ] Index on `(semester, university)` for courses
-  - [ ] Index on `(name, university)` for professors
-  - [ ] Index on `professor_id` for reviews
-  - [ ] Index on `(entity_type, semester, university)` for sync_metadata
-- [ ] Test migrations on development database
-- [ ] Document rollback procedures
+- [x] Create migration script for new fields
+  - [x] Add `last_scraped` to `courses` table
+  - [x] Add `is_stale` boolean to `courses` table
+  - [x] Add `last_updated` to `professors` table
+  - [x] Add `data_source` to `professors` table
+- [x] Create `sync_metadata` table
+  - [x] Define schema with entity_type, semester, university, last_sync, sync_status
+  - [x] Add appropriate indexes
+- [x] Create database indexes
+  - [x] Index on `(semester, university)` for courses
+  - [x] Index on `(name, university)` for professors
+  - [x] Index on `professor_id` for reviews
+  - [x] Index on `(entity_type, semester, university)` for sync_metadata
+- [x] Test migrations on development database
+- [x] Document rollback procedures
 
 ### Task 1.2: Create Data Freshness Service
 
-- [ ] Create `services/data_freshness_service.py`
-- [ ] Implement `DataFreshnessService` class
-  - [ ] `__init__()` - Initialize with TTL constants
-  - [ ] `is_course_data_fresh(semester, university)` - Check course staleness
-  - [ ] `is_professor_data_fresh(professor_id)` - Check professor staleness
-  - [ ] `is_review_data_fresh(professor_id)` - Check review staleness
-  - [ ] `get_last_sync(entity_type, semester, university)` - Get sync timestamp
-  - [ ] `mark_sync_in_progress(entity_type, semester, university)` - Lock sync
-  - [ ] `mark_sync_complete(entity_type, semester, university, status)` - Update sync
-- [ ] Add comprehensive docstrings and type hints
-- [ ] Create unit tests for freshness logic
-  - [ ] Test fresh data returns True
-  - [ ] Test stale data returns False
-  - [ ] Test missing data returns False
-  - [ ] Test edge cases (exactly at TTL boundary)
-- [ ] Create singleton instance `data_freshness_service`
+- [x] Create `services/data_freshness_service.py`
+- [x] Implement `DataFreshnessService` class
+  - [x] `__init__()` - Initialize with TTL constants
+  - [x] `is_course_data_fresh(semester, university)` - Check course staleness
+  - [x] `is_professor_data_fresh(professor_id)` - Check professor staleness
+  - [x] `is_review_data_fresh(professor_id)` - Check review staleness
+  - [x] `get_last_sync(entity_type, semester, university)` - Get sync timestamp
+  - [x] `mark_sync_in_progress(entity_type, semester, university)` - Lock sync
+  - [x] `mark_sync_complete(entity_type, semester, university, status)` - Update sync
+- [x] Add comprehensive docstrings and type hints
+- [x] Create unit tests for freshness logic
+  - [x] Test fresh data returns True
+  - [x] Test stale data returns False
+  - [x] Test missing data returns False
+  - [x] Test edge cases (exactly at TTL boundary)
+- [x] Create singleton instance `data_freshness_service`
 
 ### Task 1.3: Create Sync Metadata Model
 
-- [ ] Create `models/sync_metadata.py`
-- [ ] Define `SyncMetadata` Pydantic model
-  - [ ] `id: UUID`
-  - [ ] `entity_type: str`
-  - [ ] `semester: str`
-  - [ ] `university: str`
-  - [ ] `last_sync: datetime`
-  - [ ] `sync_status: str` (success, failed, in_progress)
-  - [ ] `error_message: Optional[str]`
-  - [ ] `created_at: datetime`
-- [ ] Add validation for entity_type enum
-- [ ] Add validation for sync_status enum
+- [x] Create `models/sync_metadata.py`
+- [x] Define `SyncMetadata` Pydantic model
+  - [x] `id: UUID`
+  - [x] `entity_type: str`
+  - [x] `semester: str`
+  - [x] `university: str`
+  - [x] `last_sync: datetime`
+  - [x] `sync_status: str` (success, failed, in_progress)
+  - [x] `error_message: Optional[str]`
+  - [x] `created_at: datetime`
+- [x] Add validation for entity_type enum
+- [x] Add validation for sync_status enum
 
 ### Task 1.4: Enhance Supabase Service
 
-- [ ] Update `services/supabase_service.py`
-- [ ] Add sync metadata methods
-  - [ ] `get_sync_metadata(entity_type, semester, university)` - Fetch sync record
-  - [ ] `create_sync_metadata(entity_type, semester, university, status)` - Create record
-  - [ ] `update_sync_metadata(entity_type, semester, university, status, error)` - Update record
-  - [ ] `get_stale_entities(entity_type, ttl_seconds)` - Find stale records
-- [ ] Update existing methods to track timestamps
-  - [ ] `insert_courses()` - Set `last_scraped`
-  - [ ] `insert_professor()` - Set `last_updated`
-  - [ ] `insert_reviews()` - Set `scraped_at`
-- [ ] Add unit tests for new methods
-- [ ] Update docstrings
+- [x] Update `services/supabase_service.py`
+- [x] Add sync metadata methods
+  - [x] `get_sync_metadata(entity_type, semester, university)` - Fetch sync record
+  - [x] `create_sync_metadata(entity_type, semester, university, status)` - Create record
+  - [x] `update_sync_metadata(entity_type, semester, university, status, error)` - Update record
+  - [x] `get_stale_entities(entity_type, ttl_seconds)` - Find stale records
+- [x] Update existing methods to track timestamps
+  - [x] `insert_courses()` - Set `last_scraped`
+  - [x] `insert_professor()` - Set `last_updated`
+  - [x] `insert_reviews()` - Set `scraped_at`
+- [x] Add unit tests for new methods
+- [x] Update docstrings
 
 ---
 
@@ -75,70 +75,70 @@
 
 ### Task 2.1: Create Data Population Service
 
-- [ ] Create `services/data_population_service.py`
-- [ ] Implement `DataPopulationService` class
-  - [ ] `__init__()` - Initialize with locks for concurrency control
-  - [ ] `ensure_course_data(semester, university, force=False)` - Ensure courses exist
-  - [ ] `ensure_professor_data(professor_name, university, force=False)` - Ensure professor exists
-  - [ ] `ensure_review_data(professor_id, force=False)` - Ensure reviews exist
-  - [ ] `populate_missing_data(entity_type, **kwargs)` - Generic population method
-  - [ ] `_acquire_lock(lock_key)` - Prevent duplicate scraping
-  - [ ] `_release_lock(lock_key)` - Release scraping lock
-- [ ] Implement concurrency control
-  - [ ] Use `asyncio.Lock` for each entity being scraped
-  - [ ] Queue requests if already scraping
-  - [ ] Return cached/existing data while scraping in background
-- [ ] Add comprehensive error handling
-  - [ ] Handle scraping failures
-  - [ ] Handle database failures
-  - [ ] Log all errors with context
-- [ ] Create unit tests
-  - [ ] Test successful population
-  - [ ] Test concurrent requests
-  - [ ] Test lock acquisition/release
-  - [ ] Test error scenarios
-- [ ] Create singleton instance `data_population_service`
+- [x] Create `services/data_population_service.py`
+- [x] Implement `DataPopulationService` class
+  - [x] `__init__()` - Initialize with locks for concurrency control
+  - [x] `ensure_course_data(semester, university, force=False)` - Ensure courses exist
+  - [x] `ensure_professor_data(professor_name, university, force=False)` - Ensure professor exists
+  - [x] `ensure_review_data(professor_id, force=False)` - Ensure reviews exist
+  - [x] `populate_missing_data(entity_type, **kwargs)` - Generic population method
+  - [x] `_acquire_lock(lock_key)` - Prevent duplicate scraping
+  - [x] `_release_lock(lock_key)` - Release scraping lock
+- [x] Implement concurrency control
+  - [x] Use `asyncio.Lock` for each entity being scraped
+  - [x] Queue requests if already scraping
+  - [x] Return cached/existing data while scraping in background
+- [x] Add comprehensive error handling
+  - [x] Handle scraping failures
+  - [x] Handle database failures
+  - [x] Log all errors with context
+- [x] Create unit tests
+  - [x] Test successful population
+  - [x] Test concurrent requests
+  - [x] Test lock acquisition/release
+  - [x] Test error scenarios
+- [x] Create singleton instance `data_population_service`
 
 ### Task 2.2: Refactor Background Jobs for On-Demand Execution
 
-- [ ] Update `background_jobs/jobs/sync_cuny_courses.py`
-  - [ ] Add parameters: `semester: Optional[str]`, `university: Optional[str]`, `force: bool`
-  - [ ] If parameters provided, sync only that semester/university
-  - [ ] If no parameters, sync all (existing behavior)
-  - [ ] Update sync_metadata on start and completion
-  - [ ] Return execution metadata (success, count, duration, errors)
-- [ ] Update `background_jobs/jobs/scrape_reviews.py`
-  - [ ] Add parameters: `professor_name: Optional[str]`, `university: Optional[str]`
-  - [ ] If parameters provided, scrape only that professor
-  - [ ] If no parameters, scrape all (existing behavior)
-  - [ ] Update sync_metadata
-  - [ ] Return execution metadata
-- [ ] Update `background_jobs/jobs/update_professor_grades.py`
-  - [ ] Add parameters: `professor_id: Optional[UUID]`
-  - [ ] If parameter provided, update only that professor
-  - [ ] If no parameter, update all (existing behavior)
-  - [ ] Update sync_metadata
-  - [ ] Return execution metadata
-- [ ] Test on-demand execution
-  - [ ] Test with specific parameters
-  - [ ] Test with no parameters (existing behavior)
-  - [ ] Verify metadata updates
-- [ ] Update docstrings with new parameters
+- [x] Update `background_jobs/jobs/sync_cuny_courses.py`
+  - [x] Add parameters: `semester: Optional[str]`, `university: Optional[str]`, `force: bool`
+  - [x] If parameters provided, sync only that semester/university
+  - [x] If no parameters, sync all (existing behavior)
+  - [x] Update sync_metadata on start and completion
+  - [x] Return execution metadata (success, count, duration, errors)
+- [x] Update `background_jobs/jobs/scrape_reviews.py`
+  - [x] Add parameters: `professor_name: Optional[str]`, `university: Optional[str]`
+  - [x] If parameters provided, scrape only that professor
+  - [x] If no parameters, scrape all (existing behavior)
+  - [x] Update sync_metadata
+  - [x] Return execution metadata
+- [x] Update `background_jobs/jobs/update_professor_grades.py`
+  - [x] Add parameters: `professor_id: Optional[UUID]`
+  - [x] If parameter provided, update only that professor
+  - [x] If no parameter, update all (existing behavior)
+  - [x] Update sync_metadata
+  - [x] Return execution metadata
+- [x] Test on-demand execution
+  - [x] Test with specific parameters
+  - [x] Test with no parameters (existing behavior)
+  - [x] Verify metadata updates
+- [x] Update docstrings with new parameters
 
 ### Task 2.3: Integrate Data Population with Background Jobs
 
-- [ ] Update `DataPopulationService.ensure_course_data()`
-  - [ ] Check if data fresh using `data_freshness_service`
-  - [ ] If stale or missing, call `sync_courses_job(semester, university)`
-  - [ ] Wait for completion or return immediately based on `wait` parameter
-  - [ ] Update sync_metadata
-- [ ] Update `DataPopulationService.ensure_professor_data()`
-  - [ ] Check if professor exists and is fresh
-  - [ ] If missing, call `scrape_reviews_job(professor_name, university)`
-  - [ ] Then call `update_grades_job(professor_id)`
-  - [ ] Handle errors gracefully
-- [ ] Add integration tests
-  - [ ] Test end-to-end population flow
+- [x] Update `DataPopulationService.ensure_course_data()`
+  - [x] Check if data fresh using `data_freshness_service`
+  - [x] If stale or missing, call `sync_courses_job(semester, university)`
+  - [x] Wait for completion or return immediately based on `wait` parameter
+  - [x] Update sync_metadata
+- [x] Update `DataPopulationService.ensure_professor_data()`
+  - [x] Check if professor exists and is fresh
+  - [x] If missing, call `scrape_reviews_job(professor_name, university)`
+  - [x] Then call `update_grades_job(professor_id)`
+  - [x] Handle errors gracefully
+- [x] Add integration tests
+  - [x] Test end-to-end population flow
   - [ ] Test with empty database
   - [ ] Test with stale data
   - [ ] Test with fresh data (should skip)

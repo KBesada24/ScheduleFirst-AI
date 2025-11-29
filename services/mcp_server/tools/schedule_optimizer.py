@@ -15,6 +15,7 @@ from ..models.professor import ProfessorGradeMetrics
 from ..models.course import CourseSearchFilter
 from ..utils.logger import get_logger
 from ..config import settings
+from ..services.data_population_service import data_population_service
 
 
 logger = get_logger(__name__)
@@ -45,6 +46,16 @@ async def fetch_course_sections(
         
         sections_data = []
         
+        # Auto-populate data if needed
+        # We assume all courses are for the same semester/university if provided
+        # If university is not provided, we might need to handle that, but for now let's assume
+        # the user wants data for the default university if not specified, or we skip population
+        target_university = university or "Baruch College" # Default for now
+        
+        # Trigger population for this semester/university
+        # This ensures we have the latest course data
+        await data_population_service.ensure_course_data(semester, target_university)
+        
         for course_code in course_codes:
             if not university:
                 # Search across all universities
@@ -54,7 +65,6 @@ async def fetch_course_sections(
                         semester=semester
                     )
                 )
-                course = courses[0] if courses else None
                 course = courses[0] if courses else None
             else:
                 course = await supabase_service.get_course_by_code(
@@ -96,7 +106,11 @@ async def fetch_course_sections(
             'success': True,
             'semester': semester,
             'total_courses': len(sections_data),
-            'courses': sections_data
+            'courses': sections_data,
+            'metadata': {
+                'source': 'hybrid',
+                'auto_populated': True
+            }
         }
     
     except Exception as e:
@@ -137,6 +151,9 @@ async def generate_optimized_schedule(
     """
     try:
         logger.info(f"Generating {max_schedules} optimized schedules")
+        
+        # Ensure data exists
+        await data_population_service.ensure_course_data(semester, university)
         
         # Create constraints
         constraints = ScheduleConstraints(
@@ -222,65 +239,17 @@ async def _get_professor_grade_impl(
     try:
         logger.info(f"Fetching grade for {professor_name}")
         
-        # Check if professor exists in database
-        professor = await supabase_service.get_professor_by_name(professor_name, university)
+        # Ensure professor data exists and is fresh
+        await data_population_service.ensure_professor_data(professor_name, university)
         
-        # If not in DB or data is stale, scrape new data
-        if not professor or (professor.last_updated and 
-                            (datetime.now() - professor.last_updated).days > 7):
-            logger.info("Scraping fresh professor data from RateMyProfessors")
-            
-            # Scrape professor data
-            prof_data = await ratemyprof_scraper.scrape_professor_data(
-                professor_name, university
-            )
-            
-            if not prof_data:
-                return {
-                    'success': False,
-                    'error': 'Professor not found on RateMyProfessors',
-                    'professor_name': professor_name
-                }
-            
-            # Analyze reviews with sentiment analysis
-            reviews = prof_data['reviews']
-            metrics = sentiment_analyzer.generate_professor_metrics(reviews)
-            composite_score = sentiment_analyzer.calculate_composite_score(metrics)
-            grade_letter = sentiment_analyzer.score_to_grade(composite_score)
-            
-            # Update or create professor in database
-            prof_info = prof_data['professor']
-            if professor:
-                # Update existing
-                await supabase_service.update_professor_grades(
-                    professor.id,
-                    grade_letter,
-                    composite_score,
-                    prof_info.get('avgRating', 0),
-                    prof_info.get('avgDifficulty', 0),
-                    prof_info.get('numRatings', 0)
-                )
-            else:
-                # Create new
-                from ..models.professor import ProfessorCreate
-                professor = await supabase_service.insert_professor(
-                    ProfessorCreate(
-                        name=professor_name,
-                        university=university,
-                        department=prof_info.get('department', 'Unknown'),
-                        ratemyprof_id=prof_info.get('legacyId'),
-                        average_rating=prof_info.get('avgRating'),
-                        average_difficulty=prof_info.get('avgDifficulty'),
-                        review_count=prof_info.get('numRatings'),
-                        grade_letter=grade_letter,
-                        composite_score=composite_score
-                    )
-                )
+        # Get professor from database
+        professor = await supabase_service.get_professor_by_name(professor_name, university)
         
         if not professor:
             return {
                 'success': False,
-                'error': 'Could not retrieve professor data'
+                'error': 'Could not retrieve professor data',
+                'professor_name': professor_name
             }
         
         return {
@@ -292,7 +261,11 @@ async def _get_professor_grade_impl(
             'average_rating': professor.average_rating,
             'average_difficulty': professor.average_difficulty,
             'review_count': professor.review_count,
-            'last_updated': professor.last_updated.isoformat() if professor.last_updated else None
+            'last_updated': professor.last_updated.isoformat() if professor.last_updated else None,
+            'metadata': {
+                'source': 'hybrid',
+                'auto_populated': True
+            }
         }
     
     except Exception as e:
@@ -399,8 +372,11 @@ async def check_schedule_conflicts(
         # Fetch sections
         sections = []
         for section_id in section_ids:
-            # TODO: Implement get_section_by_id in supabase_service
-            pass
+            section = await supabase_service.get_section_by_id(section_id)
+            if section:
+                sections.append(section)
+            else:
+                logger.warning(f"Section {section_id} not found during conflict check")
         
         # Detect conflicts
         conflicts = schedule_optimizer.detect_conflicts(sections)

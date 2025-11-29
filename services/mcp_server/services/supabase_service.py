@@ -191,6 +191,22 @@ class SupabaseService:
         except APIError as e:
             logger.error(f"Error fetching sections for professor {professor_name}: {e}")
             return []
+
+    async def get_section_by_id(self, section_id: str) -> Optional[CourseSection]:
+        """Get a course section by ID"""
+        try:
+            response = self.client.table("course_sections").select("*").eq(
+                "id", section_id
+            ).execute()
+            
+            if response.data:
+                section_data = cast(Dict[str, Any], response.data[0])
+                return CourseSection(**section_data)
+            return None
+        
+        except APIError as e:
+            logger.error(f"Error fetching section {section_id}: {e}")
+            return None
     
     # ============ Professor Operations ============
     
