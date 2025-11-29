@@ -147,7 +147,10 @@ export async function searchCoursesAPI(params: {
   limit?: number;
 }) {
   return retryWithBackoff(
-    () => apiClient.get("/api/courses", { ...params } as any),
+    async () => {
+      const response = await apiClient.get("/api/courses", { ...params } as any);
+      return response.data || response; // Fallback for backward compatibility if needed
+    },
     3
   );
 }
@@ -221,7 +224,10 @@ export async function getProfessorByNameAPI(
   if (university) params.append("university", university);
 
   return retryWithBackoff(
-    () => apiClient.get(`/api/professor/${name}?${params.toString()}`),
+    async () => {
+      const response = await apiClient.get(`/api/professor/${name}?${params.toString()}`);
+      return response.data || response;
+    },
     2
   );
 }
@@ -242,7 +248,17 @@ export async function getProfessorByIdAPI(
  * Compare multiple professors
  */
 export async function compareProfessors(professorIds: string[]) {
-  return apiClient.post("/api/professor/compare", { professorIds });
+  // Note: The backend expects professor names, but the frontend might be passing IDs or names.
+  // Assuming names for now based on backend implementation.
+  // If IDs, we might need to fetch names first or update backend.
+  // The backend endpoint is /api/professor/compare and expects professor_names.
+  
+  // If the input is actually names:
+  const response = await apiClient.post("/api/professor/compare", { 
+    professor_names: professorIds, // Mapping IDs to names param if they are names
+    university: "Baruch College" // Default for now
+  });
+  return response.data || response;
 }
 
 // ============================================
