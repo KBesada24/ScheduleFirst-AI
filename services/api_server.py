@@ -428,7 +428,6 @@ Keep responses conversational and under 150 words."""
         }
         
         return response
-        return response
     except Exception as e:
         logger.error(f"Error in chat: {e}")
         raise HTTPException(status_code=500, detail=str(e))
