@@ -5,8 +5,8 @@ from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.cron import CronTrigger
 import asyncio
 
-from ..mcp_server.config import settings
-from ..mcp_server.utils.logger import get_logger
+from mcp_server.config import settings
+from mcp_server.utils.logger import get_logger
 from .jobs.sync_cuny_courses import sync_courses_job
 from .jobs.scrape_reviews import scrape_reviews_job
 from .jobs.update_professor_grades import update_grades_job

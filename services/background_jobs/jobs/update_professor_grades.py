@@ -3,9 +3,9 @@ Background job to update professor grades based on sentiment analysis
 """
 from datetime import datetime
 
-from ...mcp_server.services.supabase_service import supabase_service
-from ...mcp_server.services.sentiment_analyzer import sentiment_analyzer
-from ...mcp_server.utils.logger import get_logger
+from mcp_server.services.supabase_service import supabase_service
+from mcp_server.services.sentiment_analyzer import sentiment_analyzer
+from mcp_server.utils.logger import get_logger
 
 
 logger = get_logger(__name__)

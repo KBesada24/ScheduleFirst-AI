@@ -4,9 +4,9 @@ Background job to sync CUNY courses from Global Search
 from datetime import datetime
 from typing import List, Dict, Any
 
-from ...mcp_server.services.cuny_global_search_scraper import cuny_scraper
-from ...mcp_server.services.supabase_service import supabase_service
-from ...mcp_server.utils.logger import get_logger
+from mcp_server.services.cuny_global_search_scraper import cuny_scraper
+from mcp_server.services.supabase_service import supabase_service
+from mcp_server.utils.logger import get_logger
 
 
 logger = get_logger(__name__)

@@ -3,9 +3,9 @@ Background job to scrape professor reviews from RateMyProfessors
 """
 from datetime import datetime
 
-from ...mcp_server.services.supabase_service import supabase_service
-from ...mcp_server.services.ratemyprof_scraper import ratemyprof_scraper
-from ...mcp_server.utils.logger import get_logger
+from mcp_server.services.supabase_service import supabase_service
+from mcp_server.services.ratemyprof_scraper import ratemyprof_scraper
+from mcp_server.utils.logger import get_logger
 
 
 logger = get_logger(__name__)
@@ -65,7 +65,7 @@ async def scrape_reviews_job(
                         
                         if prof_data:
                             # Create new professor
-                            from ...mcp_server.models.professor import ProfessorCreate
+                            from mcp_server.models.professor import ProfessorCreate
                             prof_info = prof_data['professor']
                             
                             new_prof = await supabase_service.insert_professor(

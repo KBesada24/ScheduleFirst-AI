@@ -11,11 +11,10 @@ from .data_freshness_service import data_freshness_service
 from .supabase_service import supabase_service
 
 # Import background jobs
-# Note: Using string imports or deferred imports inside methods might be safer 
-# to avoid circular dependencies if jobs import services that import this
-from ...background_jobs.jobs.sync_cuny_courses import sync_courses_job
-from ...background_jobs.jobs.scrape_reviews import scrape_reviews_job
-from ...background_jobs.jobs.update_professor_grades import update_grades_job
+# Note: Using absolute imports since background_jobs is a sibling package to mcp_server
+from background_jobs.jobs.sync_cuny_courses import sync_courses_job
+from background_jobs.jobs.scrape_reviews import scrape_reviews_job
+from background_jobs.jobs.update_professor_grades import update_grades_job
 
 
 logger = get_logger(__name__)
