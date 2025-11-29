@@ -16,6 +16,10 @@ from mcp_server.services.sentiment_analyzer import sentiment_analyzer
 from mcp_server.utils.logger import get_logger
 from mcp_server.models.schedule import ScheduleConstraints, OptimizedSchedule
 from mcp_server.models.course import CourseSearchFilter
+from mcp_server.models.api_models import ApiResponse, ResponseMetadata
+from mcp_server.services.data_population_service import data_population_service
+from mcp_server.services.data_freshness_service import data_freshness_service
+from mcp_server.tools.schedule_optimizer import compare_professors
 
 logger = get_logger(__name__)
 
@@ -56,6 +60,8 @@ async def lifespan(app: FastAPI):
     logger.info("  GET  /api/courses")
     logger.info("  POST /api/schedule/optimize")
     logger.info("  GET  /api/professor/{name}")
+    logger.info("  POST /api/professor/compare")
+    logger.info("  POST /api/admin/sync")
     logger.info("=" * 60)
     
     yield
@@ -111,32 +117,87 @@ async def health():
         raise HTTPException(status_code=503, detail="Service unavailable")
 
 
-@app.get("/api/courses")
+@app.get("/api/courses", response_model=ApiResponse)
 async def get_courses(
     semester: str,
-    university: str = "Baruch College"
+    university: str = "Baruch College",
+    auto_populate: bool = True
 ):
     """Get all courses for a semester"""
     try:
+        # Auto-populate if requested
+        was_populated = False
+        if auto_populate:
+            was_populated = await data_population_service.ensure_course_data(semester, university)
+        
         courses = await supabase_service.get_courses_by_semester(semester, university)
-        return {
-            "courses": [course.model_dump() for course in courses],
-            "count": len(courses)
-        }
+        
+        # Determine freshness
+        is_fresh = await data_freshness_service.is_course_data_fresh(semester, university)
+        last_sync = await data_freshness_service.get_last_sync("courses", semester, university)
+        
+        return ApiResponse(
+            data={
+                "courses": [course.model_dump() for course in courses],
+                "count": len(courses)
+            },
+            metadata=ResponseMetadata(
+                source="hybrid",
+                last_updated=last_sync,
+                is_fresh=is_fresh,
+                auto_populated=was_populated,
+                count=len(courses)
+            )
+        )
     except Exception as e:
         logger.error(f"Error fetching courses: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@app.post("/api/courses/search")
-async def search_courses(filters: CourseSearchFilter):
+@app.post("/api/courses/search", response_model=ApiResponse)
+async def search_courses(
+    filters: CourseSearchFilter,
+    auto_populate: bool = True
+):
     """Search courses with filters"""
     try:
+        # Auto-populate if filters provide enough context
+        was_populated = False
+        if auto_populate and filters.semester and filters.university:
+            was_populated = await data_population_service.ensure_course_data(
+                filters.semester, 
+                filters.university
+            )
+            
         courses = await supabase_service.search_courses(filters)
-        return {
-            "courses": [course.model_dump() for course in courses],
-            "count": len(courses)
-        }
+        
+        # Determine freshness (best effort)
+        is_fresh = True
+        last_sync = None
+        if filters.semester and filters.university:
+            is_fresh = await data_freshness_service.is_course_data_fresh(
+                filters.semester, 
+                filters.university
+            )
+            last_sync = await data_freshness_service.get_last_sync(
+                "courses", 
+                filters.semester, 
+                filters.university
+            )
+            
+        return ApiResponse(
+            data={
+                "courses": [course.model_dump() for course in courses],
+                "count": len(courses)
+            },
+            metadata=ResponseMetadata(
+                source="hybrid",
+                last_updated=last_sync,
+                is_fresh=is_fresh,
+                auto_populated=was_populated,
+                count=len(courses)
+            )
+        )
     except Exception as e:
         logger.error(f"Error searching courses: {e}")
         raise HTTPException(status_code=500, detail=str(e))
@@ -199,13 +260,22 @@ async def optimize_schedule(request: ScheduleOptimizeRequest):
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@app.get("/api/professor/{professor_name}")
+@app.get("/api/professor/{professor_name}", response_model=ApiResponse)
 async def get_professor(
     professor_name: str,
-    university: str = "Baruch College"
+    university: str = "Baruch College",
+    auto_populate: bool = True
 ):
     """Get professor information and grades"""
     try:
+        # Auto-populate if requested
+        was_populated = False
+        if auto_populate:
+            was_populated = await data_population_service.ensure_professor_data(
+                professor_name, 
+                university
+            )
+            
         professor = await supabase_service.get_professor_by_name(professor_name, university)
         
         if not professor:
@@ -214,15 +284,63 @@ async def get_professor(
         # Get reviews
         reviews = await supabase_service.get_reviews_by_professor(professor.id)
         
-        return {
-            "professor": professor.model_dump(),
-            "reviews": [review.model_dump() for review in reviews],
-            "review_count": len(reviews)
-        }
+        # Determine freshness
+        is_fresh = await data_freshness_service.is_professor_data_fresh(professor.id)
+        
+        return ApiResponse(
+            data={
+                "professor": professor.model_dump(),
+                "reviews": [review.model_dump() for review in reviews],
+                "review_count": len(reviews)
+            },
+            metadata=ResponseMetadata(
+                source="hybrid",
+                last_updated=professor.last_updated,
+                is_fresh=is_fresh,
+                auto_populated=was_populated,
+                count=1
+            )
+        )
     except HTTPException:
         raise
     except Exception as e:
         logger.error(f"Error fetching professor: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+class ProfessorComparisonRequest(BaseModel):
+    professor_names: List[str]
+    university: str
+    course_code: str = None
+
+
+@app.post("/api/professor/compare", response_model=ApiResponse)
+async def compare_professors_endpoint(request: ProfessorComparisonRequest):
+    """Compare multiple professors"""
+    try:
+        # Use MCP tool logic
+        result = await compare_professors(
+            professor_names=request.professor_names,
+            university=request.university,
+            course_code=request.course_code
+        )
+        
+        if not result.get("success"):
+             raise HTTPException(status_code=400, detail=result.get("error"))
+             
+        return ApiResponse(
+            data=result,
+            metadata=ResponseMetadata(
+                source="hybrid",
+                is_fresh=True, # Comparison fetches fresh data
+                auto_populated=True,
+                count=len(request.professor_names)
+            )
+        )
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error comparing professors: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 
@@ -310,9 +428,67 @@ Keep responses conversational and under 150 words."""
         }
         
         return response
+        return response
     except Exception as e:
         logger.error(f"Error in chat: {e}")
         raise HTTPException(status_code=500, detail=str(e))
+
+
+# ============================================
+# ADMIN ENDPOINTS
+# ============================================
+
+class SyncRequest(BaseModel):
+    entity_type: str
+    semester: str = None
+    university: str = None
+    force: bool = False
+
+
+@app.post("/api/admin/sync")
+async def admin_sync(request: SyncRequest):
+    """Trigger manual data sync"""
+    try:
+        success = False
+        if request.entity_type == "courses":
+            if not request.semester:
+                raise HTTPException(status_code=400, detail="Semester required for course sync")
+            
+            success = await data_population_service.ensure_course_data(
+                request.semester, 
+                request.university or "Baruch College",
+                force=request.force
+            )
+        else:
+            raise HTTPException(status_code=400, detail=f"Unsupported entity type: {request.entity_type}")
+            
+        return {"success": success, "request": request.model_dump()}
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error in admin sync: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/admin/sync-status")
+async def admin_sync_status(
+    entity_type: str,
+    semester: str,
+    university: str
+):
+    """Get sync status"""
+    try:
+        metadata = await supabase_service.get_sync_metadata(entity_type, semester, university)
+        if not metadata:
+            raise HTTPException(status_code=404, detail="Sync metadata not found")
+            
+        return metadata.model_dump()
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error fetching sync status: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
 
 
 if __name__ == "__main__":

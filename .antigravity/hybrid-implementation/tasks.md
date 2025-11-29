@@ -248,20 +248,20 @@
 
 ### Task 4.1: Update Simple CRUD Endpoints
 
-- [ ] Update `api_server.py`
-- [ ] Modify `GET /api/courses`
-  - [ ] Add `auto_populate: bool = True` query parameter
-  - [ ] If `auto_populate=true` and data missing, trigger population
-  - [ ] Add metadata to response
-  - [ ] Add error handling for population failures
-- [ ] Modify `GET /api/professor/{name}`
-  - [ ] Add `auto_populate: bool = True` query parameter
-  - [ ] Auto-enrich if missing
-  - [ ] Return metadata
-- [ ] Modify `POST /api/courses/search`
-  - [ ] Add auto-population for search results
-  - [ ] Handle partial results
-- [ ] Add response metadata to all endpoints
+- [x] Update `api_server.py`
+- [x] Modify `GET /api/courses`
+  - [x] Add `auto_populate: bool = True` query parameter
+  - [x] If `auto_populate=true` and data missing, trigger population
+  - [x] Add metadata to response
+  - [x] Add error handling for population failures
+- [x] Modify `GET /api/professor/{name}`
+  - [x] Add `auto_populate: bool = True` query parameter
+  - [x] Auto-enrich if missing
+  - [x] Return metadata
+- [x] Modify `POST /api/courses/search`
+  - [x] Add auto-population for search results
+  - [x] Handle partial results
+- [x] Add response metadata to all endpoints
   ```python
   {
       "data": [...],
@@ -274,35 +274,35 @@
       }
   }
   ```
-- [ ] Test all endpoints with `auto_populate=true/false`
+- [x] Test all endpoints with `auto_populate=true/false`
 
 ### Task 4.2: Update Complex Operation Endpoints
 
-- [ ] Verify `POST /api/schedule/optimize` uses MCP tools
-  - [ ] Should already have auto-population via MCP tool
-  - [ ] Add metadata to response
-  - [ ] Test end-to-end flow
-- [ ] Verify `POST /api/chat/message` uses Gemini with MCP tools
-  - [ ] Ensure MCP tools are accessible to Gemini
-  - [ ] Test AI can trigger data population
-  - [ ] Add logging for MCP tool usage
-- [ ] Add new endpoint `POST /api/professor/compare`
-  - [ ] Accept list of professor names
-  - [ ] Call `compare_professors` MCP tool
-  - [ ] Return comparison with metadata
-- [ ] Test all complex endpoints
+- [x] Verify `POST /api/schedule/optimize` uses MCP tools
+  - [x] Should already have auto-population via MCP tool
+  - [x] Add metadata to response
+  - [x] Test end-to-end flow
+- [x] Verify `POST /api/chat/message` uses Gemini with MCP tools
+  - [x] Ensure MCP tools are accessible to Gemini
+  - [x] Test AI can trigger data population
+  - [x] Add logging for MCP tool usage
+- [x] Add new endpoint `POST /api/professor/compare`
+  - [x] Accept list of professor names
+  - [x] Call `compare_professors` MCP tool
+  - [x] Return comparison with metadata
+- [x] Test all complex endpoints
 
 ### Task 4.3: Add Admin/Utility Endpoints
 
-- [ ] Create `POST /api/admin/sync` endpoint
-  - [ ] Trigger manual data sync
-  - [ ] Accept parameters: entity_type, semester, university
-  - [ ] Require admin authentication (future)
-  - [ ] Return sync status
-- [ ] Create `GET /api/admin/sync-status` endpoint
-  - [ ] Return sync metadata for all entities
-  - [ ] Show last sync times
-  - [ ] Show sync statuses
+- [x] Create `POST /api/admin/sync` endpoint
+  - [x] Trigger manual data sync
+  - [x] Accept parameters: entity_type, semester, university
+  - [x] Require admin authentication (future)
+  - [x] Return sync status
+- [x] Create `GET /api/admin/sync-status` endpoint
+  - [x] Return sync metadata for all entities
+  - [x] Show last sync times
+  - [x] Show sync statuses
 - [ ] Create `POST /api/admin/cache/clear` endpoint
   - [ ] Clear in-memory cache
   - [ ] Return cache statistics
@@ -310,8 +310,8 @@
   - [ ] Return cache hit rate
   - [ ] Return cache size
   - [ ] Return cache entries count
-- [ ] Test admin endpoints
-- [ ] Document admin endpoints in OpenAPI
+- [x] Test admin endpoints
+- [x] Document admin endpoints in OpenAPI
 
 ---
 
