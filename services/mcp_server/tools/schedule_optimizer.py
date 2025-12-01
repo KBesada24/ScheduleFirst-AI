@@ -14,6 +14,14 @@ from ..models.schedule import ScheduleConstraints, ScheduleOptimizationRequest
 from ..models.professor import ProfessorGradeMetrics
 from ..models.course import CourseSearchFilter
 from ..utils.logger import get_logger
+from ..utils.exceptions import (
+    ScheduleOptimizerError,
+    DataNotFoundError,
+    DataStaleError,
+    DatabaseError,
+    CircuitBreakerOpenError,
+    ScrapingError,
+)
 from ..config import settings
 from ..services.data_population_service import data_population_service
 
@@ -22,6 +30,46 @@ logger = get_logger(__name__)
 
 # Initialize FastMCP server
 mcp = FastMCP("CUNY Schedule Optimizer")
+
+
+def _build_response(
+    success: bool,
+    data: Optional[Dict] = None,
+    error: Optional[str] = None,
+    error_code: Optional[str] = None,
+    warnings: Optional[List[str]] = None,
+    suggestions: Optional[List[str]] = None,
+    data_quality: str = "full",
+) -> Dict:
+    """
+    Build a standardized response with warnings support.
+    
+    Args:
+        success: Whether the operation succeeded
+        data: Response data (merged into response if provided)
+        error: Error message if failed
+        error_code: Machine-readable error code
+        warnings: List of warning messages
+        suggestions: Actionable suggestions for errors
+        data_quality: "full", "partial", "degraded", or "stale"
+    """
+    response = {
+        "success": success,
+        "warnings": warnings or [],
+        "data_quality": data_quality,
+    }
+    
+    if data:
+        response.update(data)
+    
+    if error:
+        response["error"] = error
+        if error_code:
+            response["error_code"] = error_code
+        if suggestions:
+            response["suggestions"] = suggestions
+    
+    return response
 
 
 @mcp.tool()
@@ -41,85 +89,122 @@ async def fetch_course_sections(
     Returns:
         Dictionary with course sections, professors, times, and enrollment
     """
+    warnings: List[str] = []
+    data_quality = "full"
+    
     try:
         logger.info(f"Fetching sections for {len(course_codes)} courses")
         
         sections_data = []
+        courses_not_found = []
         
-        # Auto-populate data if needed
-        # We assume all courses are for the same semester/university if provided
-        # If university is not provided, we might need to handle that, but for now let's assume
-        # the user wants data for the default university if not specified, or we skip population
-        target_university = university or "Baruch College" # Default for now
+        target_university = university or "Baruch College"
         
         # Trigger population for this semester/university
-        # This ensures we have the latest course data
-        await data_population_service.ensure_course_data(semester, target_university)
+        population_result = await data_population_service.ensure_course_data(semester, target_university)
+        if population_result.warnings:
+            warnings.extend(population_result.warnings)
+        if population_result.is_partial:
+            data_quality = "partial"
         
         for course_code in course_codes:
-            if not university:
-                # Search across all universities
-                courses = await supabase_service.search_courses(
-                    CourseSearchFilter(
-                        course_code=course_code,
-                        semester=semester
+            try:
+                if not university:
+                    courses = await supabase_service.search_courses(
+                        CourseSearchFilter(
+                            course_code=course_code,
+                            semester=semester
+                        )
                     )
-                )
-                course = courses[0] if courses else None
-            else:
-                course = await supabase_service.get_course_by_code(
-                    course_code, semester, university
-                )
-            
-            if not course:
-                logger.warning(f"Course {course_code} not found")
-                continue
-            
-            # Get sections
-            sections = await supabase_service.get_sections_by_course(course.id)
-            
-            sections_data.append({
-                'course_code': course.course_code,
-                'course_name': course.name,
-                'credits': course.credits,
-                'university': course.university,
-                'total_sections': len(sections),
-                'sections': [
-                    {
-                        'id': str(section.id),
-                        'section_number': section.section_number,
-                        'professor_name': section.professor_name,
-                        'days': section.days,
-                        'start_time': section.start_time.isoformat() if section.start_time else None,
-                        'end_time': section.end_time.isoformat() if section.end_time else None,
-                        'location': section.location,
-                        'modality': section.modality,
-                        'enrolled': section.enrolled,
-                        'capacity': section.capacity,
-                        'seats_available': (section.capacity - section.enrolled) if section.capacity and section.enrolled else None
-                    }
-                    for section in sections
-                ]
-            })
+                    course = courses[0] if courses else None
+                else:
+                    course = await supabase_service.get_course_by_code(
+                        course_code, semester, university
+                    )
+                
+                if not course:
+                    courses_not_found.append(course_code)
+                    continue
+                
+                # Get sections
+                sections = await supabase_service.get_sections_by_course(course.id)
+                
+                sections_data.append({
+                    'course_code': course.course_code,
+                    'course_name': course.name,
+                    'credits': course.credits,
+                    'university': course.university,
+                    'total_sections': len(sections),
+                    'sections': [
+                        {
+                            'id': str(section.id),
+                            'section_number': section.section_number,
+                            'professor_name': section.professor_name,
+                            'days': section.days,
+                            'start_time': section.start_time.isoformat() if section.start_time else None,
+                            'end_time': section.end_time.isoformat() if section.end_time else None,
+                            'location': section.location,
+                            'modality': section.modality,
+                            'enrolled': section.enrolled,
+                            'capacity': section.capacity,
+                            'seats_available': (section.capacity - section.enrolled) if section.capacity and section.enrolled else None
+                        }
+                        for section in sections
+                    ]
+                })
+            except DataNotFoundError:
+                courses_not_found.append(course_code)
+            except DatabaseError as e:
+                logger.warning(f"Database error fetching {course_code}: {e}")
+                warnings.append(f"Could not fetch {course_code}: database error")
         
-        return {
-            'success': True,
-            'semester': semester,
-            'total_courses': len(sections_data),
-            'courses': sections_data,
-            'metadata': {
-                'source': 'hybrid',
-                'auto_populated': True
-            }
-        }
+        # Add warning for courses not found
+        if courses_not_found:
+            warnings.append(f"Courses not found: {', '.join(courses_not_found)}")
+            if len(courses_not_found) == len(course_codes):
+                data_quality = "degraded"
+        
+        return _build_response(
+            success=True,
+            data={
+                'semester': semester,
+                'total_courses': len(sections_data),
+                'courses': sections_data,
+                'metadata': {
+                    'source': 'hybrid',
+                    'auto_populated': True
+                }
+            },
+            warnings=warnings,
+            data_quality=data_quality,
+        )
     
+    except CircuitBreakerOpenError as e:
+        logger.warning(f"Circuit breaker open: {e}")
+        return _build_response(
+            success=False,
+            error=e.user_message,
+            error_code=e.code,
+            suggestions=e.suggestions,
+            data={"courses": []},
+        )
+    except DatabaseError as e:
+        logger.error(f"Database error fetching course sections: {e}")
+        return _build_response(
+            success=False,
+            error=e.user_message,
+            error_code=e.code,
+            suggestions=e.suggestions,
+            data={"courses": []},
+        )
     except Exception as e:
-        logger.error(f"Error fetching course sections: {e}")
-        return {
-            'success': False,
-            'error': str(e),
-            'courses': []
-        }
+        logger.error(f"Error fetching course sections: {e}", exc_info=True)
+        return _build_response(
+            success=False,
+            error="An unexpected error occurred while fetching courses",
+            error_code="INTERNAL_ERROR",
+            data={"courses": []},
+        )
 
 
 @mcp.tool()
@@ -149,11 +234,18 @@ async def generate_optimized_schedule(
     Returns:
         Dictionary with optimized schedules ranked by preference score
     """
+    warnings: List[str] = []
+    data_quality = "full"
+    
     try:
         logger.info(f"Generating {max_schedules} optimized schedules")
         
         # Ensure data exists
-        await data_population_service.ensure_course_data(semester, university)
+        population_result = await data_population_service.ensure_course_data(semester, university)
+        if population_result.warnings:
+            warnings.extend(population_result.warnings)
+        if population_result.is_partial:
+            data_quality = "partial"
         
         # Create constraints
         constraints = ScheduleConstraints(
@@ -176,6 +268,9 @@ async def generate_optimized_schedule(
             constraints=constraints,
             max_results=max_schedules
         )
+        
+        if not schedules:
+            warnings.append("No valid schedules found with current constraints")
         
         # Convert to dict format
         schedules_data = [
@@ -213,19 +308,42 @@ async def generate_optimized_schedule(
             for schedule in schedules
         ]
         
-        return {
-            'success': True,
-            'total_schedules': len(schedules_data),
-            'schedules': schedules_data
-        }
+        return _build_response(
+            success=True,
+            data={
+                'total_schedules': len(schedules_data),
+                'schedules': schedules_data,
+            },
+            warnings=warnings,
+            data_quality=data_quality,
+        )
     
+    except CircuitBreakerOpenError as e:
+        logger.warning(f"Circuit breaker open during schedule generation: {e}")
+        return _build_response(
+            success=False,
+            error=e.user_message,
+            error_code=e.code,
+            suggestions=e.suggestions,
+            data={"schedules": []},
+        )
+    except DatabaseError as e:
+        logger.error(f"Database error generating schedules: {e}")
+        return _build_response(
+            success=False,
+            error=e.user_message,
+            error_code=e.code,
+            suggestions=e.suggestions,
+            data={"schedules": []},
+        )
     except Exception as e:
-        logger.error(f"Error generating schedules: {e}")
-        return {
-            'success': False,
-            'error': str(e),
-            'schedules': []
-        }
+        logger.error(f"Error generating schedules: {e}", exc_info=True)
+        return _build_response(
+            success=False,
+            error="An unexpected error occurred while generating schedules",
+            error_code="INTERNAL_ERROR",
+            data={"schedules": []},
+        )
 
 
 async def _get_professor_grade_impl(
@@ -236,44 +354,87 @@ async def _get_professor_grade_impl(
     """
     Internal implementation for getting professor grade
     """
+    warnings: List[str] = []
+    data_quality = "full"
+    
     try:
         logger.info(f"Fetching grade for {professor_name}")
         
         # Ensure professor data exists and is fresh
-        await data_population_service.ensure_professor_data(professor_name, university)
+        population_result = await data_population_service.ensure_professor_data(professor_name, university)
+        if population_result.warnings:
+            warnings.extend(population_result.warnings)
+        if population_result.is_partial:
+            data_quality = "partial"
+        
+        if not population_result.success:
+            return _build_response(
+                success=False,
+                error=population_result.error or "Could not fetch professor data",
+                error_code="POPULATION_ERROR",
+                warnings=warnings,
+                data={"professor_name": professor_name},
+            )
         
         # Get professor from database
         professor = await supabase_service.get_professor_by_name(professor_name, university)
         
-        if not professor:
-            return {
-                'success': False,
-                'error': 'Could not retrieve professor data',
-                'professor_name': professor_name
-            }
-        
-        return {
-            'success': True,
-            'professor_name': professor.name,
-            'university': professor.university,
-            'grade_letter': professor.grade_letter,
-            'composite_score': professor.composite_score,
-            'average_rating': professor.average_rating,
-            'average_difficulty': professor.average_difficulty,
-            'review_count': professor.review_count,
-            'last_updated': professor.last_updated.isoformat() if professor.last_updated else None,
-            'metadata': {
-                'source': 'hybrid',
-                'auto_populated': True
-            }
-        }
+        return _build_response(
+            success=True,
+            data={
+                'professor_name': professor.name,
+                'university': professor.university,
+                'grade_letter': professor.grade_letter,
+                'composite_score': professor.composite_score,
+                'average_rating': professor.average_rating,
+                'average_difficulty': professor.average_difficulty,
+                'review_count': professor.review_count,
+                'last_updated': professor.last_updated.isoformat() if professor.last_updated else None,
+                'metadata': {
+                    'source': 'hybrid',
+                    'auto_populated': True
+                }
+            },
+            warnings=warnings,
+            data_quality=data_quality,
+        )
     
+    except DataNotFoundError as e:
+        logger.warning(f"Professor not found: {professor_name}")
+        return _build_response(
+            success=False,
+            error=e.user_message,
+            error_code=e.code,
+            suggestions=e.suggestions,
+            warnings=warnings,
+            data={"professor_name": professor_name},
+        )
+    except CircuitBreakerOpenError as e:
+        logger.warning(f"Circuit breaker open: {e}")
+        return _build_response(
+            success=False,
+            error=e.user_message,
+            error_code=e.code,
+            suggestions=e.suggestions,
+            data={"professor_name": professor_name},
+        )
+    except DatabaseError as e:
+        logger.error(f"Database error getting professor grade: {e}")
+        return _build_response(
+            success=False,
+            error=e.user_message,
+            error_code=e.code,
+            suggestions=e.suggestions,
+            data={"professor_name": professor_name},
+        )
     except Exception as e:
-        logger.error(f"Error getting professor grade: {e}")
-        return {
-            'success': False,
-            'error': str(e)
-        }
+        logger.error(f"Error getting professor grade: {e}", exc_info=True)
+        return _build_response(
+            success=False,
+            error="An unexpected error occurred",
+            error_code="INTERNAL_ERROR",
+            data={"professor_name": professor_name},
+        )
 
 
 @mcp.tool()
@@ -313,21 +474,40 @@ async def compare_professors(
     Returns:
         Comparison data with metrics and AI recommendation
     """
+    warnings: List[str] = []
+    data_quality = "full"
+    
     try:
         logger.info(f"Comparing {len(professor_names)} professors")
         
         professors_data = []
+        professors_failed = []
         
         for name in professor_names:
             prof_grade = await _get_professor_grade_impl(name, university, course_code)
             if prof_grade['success']:
                 professors_data.append(prof_grade)
+                # Collect any warnings from individual professor fetches
+                if prof_grade.get('warnings'):
+                    warnings.extend(prof_grade['warnings'])
+            else:
+                professors_failed.append(name)
+        
+        if professors_failed:
+            warnings.append(f"Could not fetch data for: {', '.join(professors_failed)}")
         
         if not professors_data:
-            return {
-                'success': False,
-                'error': 'No professor data found'
-            }
+            return _build_response(
+                success=False,
+                error="No professor data could be retrieved",
+                error_code="DATA_NOT_FOUND",
+                warnings=warnings,
+                suggestions=["Check professor names are spelled correctly", "Try searching for professors individually"],
+            )
+        
+        # Determine data quality
+        if len(professors_failed) > 0:
+            data_quality = "partial" if len(professors_data) > 0 else "degraded"
         
         # Sort by grade
         professors_data.sort(key=lambda p: p.get('composite_score', 0), reverse=True)
@@ -337,20 +517,33 @@ async def compare_professors(
         recommendation = f"Based on ratings and reviews, {best_prof['professor_name']} " \
                         f"(Grade: {best_prof['grade_letter']}) is recommended."
         
-        return {
-            'success': True,
-            'total_professors': len(professors_data),
-            'professors': professors_data,
-            'recommendation': recommendation,
-            'course_code': course_code
-        }
+        return _build_response(
+            success=True,
+            data={
+                'total_professors': len(professors_data),
+                'professors': professors_data,
+                'recommendation': recommendation,
+                'course_code': course_code,
+            },
+            warnings=warnings,
+            data_quality=data_quality,
+        )
     
+    except CircuitBreakerOpenError as e:
+        logger.warning(f"Circuit breaker open during professor comparison: {e}")
+        return _build_response(
+            success=False,
+            error=e.user_message,
+            error_code=e.code,
+            suggestions=e.suggestions,
+        )
     except Exception as e:
-        logger.error(f"Error comparing professors: {e}")
-        return {
-            'success': False,
-            'error': str(e)
-        }
+        logger.error(f"Error comparing professors: {e}", exc_info=True)
+        return _build_response(
+            success=False,
+            error="An unexpected error occurred while comparing professors",
+            error_code="INTERNAL_ERROR",
+        )
 
 
 @mcp.tool()
@@ -366,41 +559,81 @@ async def check_schedule_conflicts(
     Returns:
         Dictionary with detected conflicts
     """
+    warnings: List[str] = []
+    
     try:
         from uuid import UUID
         
         # Fetch sections
         sections = []
+        sections_not_found = []
+        
         for section_id in section_ids:
-            section = await supabase_service.get_section_by_id(section_id)
-            if section:
+            try:
+                section = await supabase_service.get_section_by_id(section_id)
                 sections.append(section)
-            else:
+            except DataNotFoundError:
+                sections_not_found.append(section_id)
                 logger.warning(f"Section {section_id} not found during conflict check")
+            except DatabaseError as e:
+                warnings.append(f"Could not fetch section {section_id[:8]}...")
+                logger.warning(f"Database error fetching section {section_id}: {e}")
+        
+        if sections_not_found:
+            warnings.append(f"{len(sections_not_found)} section(s) not found")
+        
+        if not sections:
+            return _build_response(
+                success=False,
+                error="No valid sections found to check",
+                error_code="DATA_NOT_FOUND",
+                warnings=warnings,
+            )
         
         # Detect conflicts
         conflicts = schedule_optimizer.detect_conflicts(sections)
         
-        return {
-            'success': True,
-            'total_conflicts': len(conflicts),
-            'conflicts': [
-                {
-                    'type': c.conflict_type,
-                    'severity': c.severity,
-                    'description': c.description,
-                    'suggestion': c.suggestion
-                }
-                for c in conflicts
-            ]
-        }
+        return _build_response(
+            success=True,
+            data={
+                'total_conflicts': len(conflicts),
+                'conflicts': [
+                    {
+                        'type': c.conflict_type,
+                        'severity': c.severity,
+                        'description': c.description,
+                        'suggestion': c.suggestion
+                    }
+                    for c in conflicts
+                ]
+            },
+            warnings=warnings,
+            data_quality="partial" if warnings else "full",
+        )
     
+    except CircuitBreakerOpenError as e:
+        logger.warning(f"Circuit breaker open: {e}")
+        return _build_response(
+            success=False,
+            error=e.user_message,
+            error_code=e.code,
+            suggestions=e.suggestions,
+        )
+    except DatabaseError as e:
+        logger.error(f"Database error checking conflicts: {e}")
+        return _build_response(
+            success=False,
+            error=e.user_message,
+            error_code=e.code,
+            suggestions=e.suggestions,
+        )
     except Exception as e:
-        logger.error(f"Error checking conflicts: {e}")
-        return {
-            'success': False,
-            'error': str(e)
-        }
+        logger.error(f"Error checking conflicts: {e}", exc_info=True)
+        return _build_response(
+            success=False,
+            error="An unexpected error occurred while checking conflicts",
+            error_code="INTERNAL_ERROR",
+        )
 
 
 # Export MCP server instance

@@ -2,9 +2,21 @@
  * API Client Utility
  * 
  * Centralized API client with fetch wrapper, interceptors, and error handling
+ * Supports structured error responses and automatic warning toasts
  */
 
 import { supabase } from "../../supabase/supabase";
+import { 
+  isErrorResponse, 
+  isSuccessResponse, 
+  getWarnings, 
+  isDataDegraded,
+  isDataStale,
+  type ErrorResponse,
+  type ApiResponse,
+  ErrorCode,
+} from "@/types/api-responses";
+import { createWarningsToasts, createDataQualityToast } from "./notifications";
 
 // API base URL - defaults to localhost for development
 const API_BASE_URL = import.meta.env.VITE_API_URL || "http://localhost:8000";
@@ -12,6 +24,19 @@ const API_BASE_URL = import.meta.env.VITE_API_URL || "http://localhost:8000";
 // Timeout configuration
 const REQUEST_TIMEOUT = 30000; // 30 seconds
 const AI_REQUEST_TIMEOUT = 60000; // 60 seconds for AI operations
+
+// Warning toast callback - set by consuming code to integrate with toast system
+let showWarningToast: ((toast: ReturnType<typeof createWarningsToasts>[0]) => void) | null = null;
+
+/**
+ * Register a callback to show warning toasts
+ * Call this once during app initialization with your toast function
+ */
+export function registerWarningToastHandler(
+  handler: (toast: ReturnType<typeof createWarningsToasts>[0]) => void
+) {
+  showWarningToast = handler;
+}
 
 // Fetch wrapper with timeout
 async function fetchWithTimeout(
@@ -42,20 +67,47 @@ export interface APIError {
   message: string;
   code?: string;
   status?: number;
-  details?: any;
+  details?: Record<string, unknown>;
+  suggestions?: string[];
+  retryAfter?: number;
 }
 
 export class APIClientError extends Error {
   code?: string;
   status?: number;
-  details?: any;
+  details?: Record<string, unknown>;
+  suggestions?: string[];
+  retryAfter?: number;
 
-  constructor(message: string, code?: string, status?: number, details?: any) {
+  constructor(
+    message: string, 
+    code?: string, 
+    status?: number, 
+    details?: Record<string, unknown>,
+    suggestions?: string[],
+    retryAfter?: number
+  ) {
     super(message);
     this.name = "APIClientError";
     this.code = code;
     this.status = status;
     this.details = details;
+    this.suggestions = suggestions;
+    this.retryAfter = retryAfter;
+  }
+  
+  /**
+   * Create APIClientError from backend ErrorResponse
+   */
+  static fromErrorResponse(response: ErrorResponse, status: number, retryAfter?: number): APIClientError {
+    return new APIClientError(
+      response.user_message || response.message,
+      response.code,
+      status,
+      response.details,
+      response.suggestions,
+      retryAfter
+    );
   }
 }
 
@@ -93,37 +145,72 @@ async function requestInterceptor(
 }
 
 /**
- * Response interceptor - handles errors and parses responses
+ * Response interceptor - handles errors, parses responses, and shows warnings
  */
-async function responseInterceptor(response: Response): Promise<any> {
-  // Check if response is ok
-  if (!response.ok) {
-    let errorMessage = `HTTP ${response.status}: ${response.statusText}`;
-    let errorDetails: any = null;
-
-    try {
-      const errorData = await response.json();
-      errorMessage = errorData.message || errorData.detail || errorMessage;
-      errorDetails = errorData;
-    } catch {
-      // If response is not JSON, use status text
+async function responseInterceptor<T = unknown>(response: Response): Promise<T> {
+  // Extract Retry-After header if present
+  const retryAfterHeader = response.headers.get("Retry-After");
+  const retryAfter = retryAfterHeader ? parseInt(retryAfterHeader, 10) : undefined;
+  
+  // Parse JSON response
+  let data: unknown;
+  try {
+    data = await response.json();
+  } catch {
+    // If response is not JSON
+    if (!response.ok) {
+      throw new APIClientError(
+        `HTTP ${response.status}: ${response.statusText}`,
+        `HTTP_${response.status}`,
+        response.status
+      );
     }
-
+    return null;
+  }
+  
+  // Check if response is a structured error from our backend
+  if (isErrorResponse(data)) {
+    throw APIClientError.fromErrorResponse(data, response.status, retryAfter);
+  }
+  
+  // Check if response is not ok (legacy error format)
+  if (!response.ok) {
+    const errorMessage = typeof data === 'object' && data !== null && 'message' in data
+      ? (data as { message: string }).message
+      : `HTTP ${response.status}: ${response.statusText}`;
+      
     throw new APIClientError(
       errorMessage,
       `HTTP_${response.status}`,
       response.status,
-      errorDetails
+      typeof data === 'object' ? data as Record<string, unknown> : undefined
     );
   }
-
-  // Parse JSON response
-  try {
-    return await response.json();
-  } catch {
-    // If response is not JSON, return null
-    return null;
+  
+  // Handle successful responses - show warnings automatically
+  if (showWarningToast) {
+    // Show warnings from response
+    const warnings = getWarnings(data);
+    if (warnings.length > 0) {
+      const toasts = createWarningsToasts(warnings);
+      toasts.forEach(toast => showWarningToast?.(toast));
+    }
+    
+    // Show data quality warnings
+    if (isSuccessResponse(data)) {
+      if (isDataDegraded(data) || isDataStale(data)) {
+        const qualityToast = createDataQualityToast(
+          data.metadata?.data_quality || "full",
+          isDataStale(data)
+        );
+        if (qualityToast) {
+          showWarningToast(qualityToast);
+        }
+      }
+    }
   }
+
+  return data as T;
 }
 
 /**

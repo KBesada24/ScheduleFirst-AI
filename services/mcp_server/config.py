@@ -4,7 +4,7 @@ Loads environment variables and provides typed configuration objects
 """
 import os
 from pathlib import Path
-from typing import Optional
+from typing import Any, Optional
 from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
@@ -15,6 +15,15 @@ class Settings(BaseSettings):
     # Environment
     environment: str = Field(default="development", alias="ENVIRONMENT")
     debug: bool = Field(default=False, alias="DEBUG")
+    
+    @staticmethod
+    def parse_bool(v: Any) -> bool:
+        """Parse boolean from string values"""
+        if isinstance(v, bool):
+            return v
+        if isinstance(v, str):
+            return v.lower() in ('true', '1', 'yes', 'on')
+        return bool(v)
     
     # API Keys
     gemini_api_key: str = Field(..., alias="GEMINI_API_KEY")

@@ -1,17 +1,21 @@
 """
-CUNY Global Search web scraper
+CUNY Global Search web scraper with circuit breaker and structured error handling
 Scrapes course data from CUNY Global Search website
 """
 import asyncio
 import re
 from datetime import datetime, time
-from typing import List, Dict, Optional, Any
+from typing import List, Dict, Optional, Any, Tuple
 from selenium import webdriver
 from selenium.webdriver.common.by import By
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
 from selenium.webdriver.chrome.options import Options
-from selenium.common.exceptions import TimeoutException, NoSuchElementException
+from selenium.common.exceptions import (
+    TimeoutException as SeleniumTimeout,
+    NoSuchElementException,
+    WebDriverException,
+)
 from bs4 import BeautifulSoup
 from webdriver_manager.chrome import ChromeDriverManager
 from selenium.webdriver.chrome.service import Service
@@ -19,19 +23,25 @@ from selenium.webdriver.chrome.service import Service
 from ..config import settings
 from ..utils.logger import get_logger
 from ..utils.validators import parse_time_string, normalize_professor_name
+from ..utils.exceptions import ScrapingError, ExternalServiceError
+from ..utils.circuit_breaker import circuit_registry
 
 
 logger = get_logger(__name__)
 
+# Get the CUNY scraper circuit breaker
+cuny_breaker = circuit_registry.get("cuny_scraper")
+
 
 class CUNYGlobalSearchScraper:
-    """Scraper for CUNY Global Search course data"""
+    """Scraper for CUNY Global Search course data with resilience patterns"""
     
     BASE_URL = settings.cuny_global_search_url
     
     def __init__(self):
         self.driver: Optional[webdriver.Chrome] = None
-        logger.info("CUNY Global Search Scraper initialized")
+        self._driver_lock = asyncio.Lock()
+        logger.info("CUNY Global Search Scraper initialized with circuit breaker")
     
     def _get_chrome_options(self) -> Options:
         """Configure Selenium Chrome options"""
@@ -45,24 +55,44 @@ class CUNYGlobalSearchScraper:
         return options
     
     def _init_driver(self) -> webdriver.Chrome:
-        """Initialize Selenium WebDriver"""
+        """
+        Initialize Selenium WebDriver.
+        
+        Raises:
+            ScrapingError: If WebDriver initialization fails
+        """
         try:
             service = Service(ChromeDriverManager().install())
             driver = webdriver.Chrome(service=service, options=self._get_chrome_options())
             driver.implicitly_wait(10)
             logger.info("Chrome WebDriver initialized")
             return driver
-        except Exception as e:
+        except WebDriverException as e:
             logger.error(f"Failed to initialize WebDriver: {e}")
-            raise
+            raise ScrapingError(
+                source="CUNY Global Search",
+                reason=f"WebDriver initialization failed: {e}",
+            )
+        except Exception as e:
+            logger.error(f"Unexpected error initializing WebDriver: {e}")
+            raise ScrapingError(
+                source="CUNY Global Search",
+                reason=f"WebDriver setup error: {e}",
+            )
     
+    @cuny_breaker.protected
     async def scrape_semester_courses(self, semester: str) -> List[Dict[str, Any]]:
         """
-        Scrape all courses for a given semester from CUNY Global Search
+        Scrape all courses for a given semester from CUNY Global Search.
         Semester format: "Fall 2025", "Spring 2026", etc.
+        
+        Raises:
+            ScrapingError: If scraping fails
+            ExternalServiceError: If CUNY service is unavailable
         """
         logger.info(f"Starting scrape for semester: {semester}")
         courses: List[Dict[str, Any]] = []
+        failed_schools: List[str] = []
         
         # Get list of all CUNY schools
         cuny_schools = self._get_cuny_schools()
@@ -80,11 +110,33 @@ class CUNYGlobalSearchScraper:
                 # Rate limiting - delay between schools
                 await asyncio.sleep(settings.scraper_request_delay)
             
+            except ScrapingError as e:
+                logger.warning(f"Failed to scrape {school['name']}: {e}")
+                failed_schools.append(school['name'])
+                continue
             except Exception as e:
-                logger.error(f"Error scraping {school['name']}: {e}")
+                logger.error(f"Unexpected error scraping {school['name']}: {e}")
+                failed_schools.append(school['name'])
                 continue
         
-        logger.info(f"Completed scraping. Total courses: {len(courses)}")
+        # Log summary
+        if failed_schools:
+            logger.warning(
+                f"Scraping completed with errors. "
+                f"Successful: {len(cuny_schools) - len(failed_schools)}, "
+                f"Failed: {len(failed_schools)} ({', '.join(failed_schools)})"
+            )
+        else:
+            logger.info(f"Completed scraping successfully. Total courses: {len(courses)}")
+        
+        # If all schools failed, raise error
+        if len(failed_schools) == len(cuny_schools):
+            raise ExternalServiceError(
+                service="CUNY Global Search",
+                operation="scrape_semester_courses",
+                details={"semester": semester, "failed_schools": failed_schools},
+            )
+        
         return courses
     
     async def _scrape_school_courses(
@@ -93,50 +145,88 @@ class CUNYGlobalSearchScraper:
         school_name: str,
         semester: str
     ) -> List[Dict[str, Any]]:
-        """Scrape courses for a specific school and semester"""
+        """
+        Scrape courses for a specific school and semester.
+        
+        Raises:
+            ScrapingError: If scraping fails for this school
+        """
         courses: List[Dict[str, Any]] = []
         
-        try:
-            # Initialize driver if not already done
-            if not self.driver:
-                self.driver = self._init_driver()
-            
-            # Construct search URL (adjust based on actual CUNY Global Search URL structure)
-            search_url = f"{self.BASE_URL}?school={school_code}&semester={semester}"
-            logger.debug(f"Navigating to: {search_url}")
-            
-            self.driver.get(search_url)
-            
-            # Wait for results to load (adjust selector based on actual page structure)
+        async with self._driver_lock:
             try:
-                WebDriverWait(self.driver, 15).until(
-                    EC.presence_of_element_located((By.CLASS_NAME, "course-listing"))
-                )
-            except TimeoutException:
-                logger.warning(f"Timeout waiting for course listings on {school_name}")
-                return courses
-            
-            # Get the rendered HTML
-            html = self.driver.page_source
-            soup = BeautifulSoup(html, 'html.parser')
-            
-            # Parse course listings (adjust selectors based on actual page structure)
-            course_elements = soup.find_all('div', class_='course-listing')
-            logger.debug(f"Found {len(course_elements)} course elements")
-            
-            for element in course_elements:
+                # Initialize driver if not already done
+                if not self.driver:
+                    self.driver = self._init_driver()
+                
+                # Construct search URL (adjust based on actual CUNY Global Search URL structure)
+                search_url = f"{self.BASE_URL}?school={school_code}&semester={semester}"
+                logger.debug(f"Navigating to: {search_url}")
+                
+                self.driver.get(search_url)
+                
+                # Wait for results to load (adjust selector based on actual page structure)
                 try:
-                    course_data = self._parse_course_element(element, school_name, semester)
-                    if course_data:
-                        courses.append(course_data)
-                except Exception as e:
-                    logger.warning(f"Error parsing course element: {e}")
-                    continue
-        
-        except Exception as e:
-            logger.error(f"Error in _scrape_school_courses: {e}")
+                    WebDriverWait(self.driver, 15).until(
+                        EC.presence_of_element_located((By.CLASS_NAME, "course-listing"))
+                    )
+                except SeleniumTimeout:
+                    logger.warning(f"Timeout waiting for course listings on {school_name}")
+                    # Not necessarily an error - might just be no courses
+                    return courses
+                
+                # Get the rendered HTML
+                html = self.driver.page_source
+                soup = BeautifulSoup(html, 'html.parser')
+                
+                # Parse course listings (adjust selectors based on actual page structure)
+                course_elements = soup.find_all('div', class_='course-listing')
+                logger.debug(f"Found {len(course_elements)} course elements")
+                
+                parse_errors = 0
+                for element in course_elements:
+                    try:
+                        course_data = self._parse_course_element(element, school_name, semester)
+                        if course_data:
+                            courses.append(course_data)
+                    except Exception as e:
+                        parse_errors += 1
+                        logger.debug(f"Error parsing course element: {e}")
+                        continue
+                
+                if parse_errors > 0:
+                    logger.warning(
+                        f"Parsed {len(courses)} courses with {parse_errors} parse errors",
+                        extra={"school": school_name, "semester": semester}
+                    )
+                
+            except WebDriverException as e:
+                # Reset driver on WebDriver errors
+                self._safe_close_driver()
+                raise ScrapingError(
+                    source="CUNY Global Search",
+                    reason=f"WebDriver error for {school_name}: {e}",
+                )
+            except ScrapingError:
+                raise
+            except Exception as e:
+                logger.error(f"Error in _scrape_school_courses: {e}", exc_info=True)
+                raise ScrapingError(
+                    source="CUNY Global Search",
+                    reason=f"Failed to scrape {school_name}: {e}",
+                )
         
         return courses
+    
+    def _safe_close_driver(self) -> None:
+        """Safely close the WebDriver, ignoring errors"""
+        try:
+            if self.driver:
+                self.driver.quit()
+        except Exception:
+            pass
+        finally:
+            self.driver = None
     
     def _parse_course_element(
         self,
@@ -145,7 +235,7 @@ class CUNYGlobalSearchScraper:
         semester: str
     ) -> Optional[Dict[str, Any]]:
         """
-        Extract course details from a course listing element
+        Extract course details from a course listing element.
         Note: Selectors need to be adjusted based on actual CUNY Global Search HTML
         """
         try:
@@ -198,12 +288,12 @@ class CUNYGlobalSearchScraper:
             }
         
         except Exception as e:
-            logger.error(f"Error parsing course element: {e}")
+            logger.debug(f"Error parsing course element: {e}")
             return None
     
     def _parse_section_element(self, element: Any) -> Optional[Dict[str, Any]]:
         """
-        Extract section details (professor, time, location, etc.)
+        Extract section details (professor, time, location, etc.).
         Note: Selectors need to be adjusted based on actual HTML structure
         """
         try:
@@ -249,10 +339,10 @@ class CUNYGlobalSearchScraper:
             }
         
         except Exception as e:
-            logger.error(f"Error parsing section element: {e}")
+            logger.debug(f"Error parsing section element: {e}")
             return None
     
-    def _parse_time_slot(self, time_str: str) -> tuple[Optional[str], Optional[time], Optional[time]]:
+    def _parse_time_slot(self, time_str: str) -> Tuple[Optional[str], Optional[time], Optional[time]]:
         """
         Parse time slot like "MWF 10:00-11:15 AM" or "Tu 6:30-8:15 PM"
         Returns: (days: str, start_time: time, end_time: time)
@@ -296,7 +386,7 @@ class CUNYGlobalSearchScraper:
         logger.debug(f"Could not parse time slot: {time_str}")
         return None, None, None
     
-    def _parse_enrollment(self, enrollment_str: str) -> tuple[Optional[int], Optional[int]]:
+    def _parse_enrollment(self, enrollment_str: str) -> Tuple[Optional[int], Optional[int]]:
         """
         Parse enrollment like "45/50"
         Returns: (enrolled: int, capacity: int)
@@ -311,9 +401,7 @@ class CUNYGlobalSearchScraper:
         return None, None
     
     def _get_cuny_schools(self) -> List[Dict[str, str]]:
-        """
-        Get list of all CUNY schools with their codes
-        """
+        """Get list of all CUNY schools with their codes"""
         return [
             {'code': 'CCNY', 'name': 'City College'},
             {'code': 'HUNTER', 'name': 'Hunter College'},
@@ -334,12 +422,16 @@ class CUNYGlobalSearchScraper:
             {'code': 'QCC', 'name': 'Queensborough Community College'},
         ]
     
-    def close(self):
+    def close(self) -> None:
         """Close the WebDriver"""
         if self.driver:
-            self.driver.quit()
-            self.driver = None
-            logger.info("WebDriver closed")
+            try:
+                self.driver.quit()
+            except Exception as e:
+                logger.debug(f"Error closing WebDriver: {e}")
+            finally:
+                self.driver = None
+                logger.info("WebDriver closed")
     
     def __del__(self):
         """Cleanup on deletion"""

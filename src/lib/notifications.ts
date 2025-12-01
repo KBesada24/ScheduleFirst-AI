@@ -66,6 +66,7 @@ export function createInfoToast(
 
 /**
  * Create a warning toast configuration
+ * Warning messages auto-dismiss after 5 seconds with amber styling
  */
 export function createWarningToast(
   title: string,
@@ -74,9 +75,51 @@ export function createWarningToast(
   return {
     title,
     description: options.description,
-    variant: "destructive" as const,
-    duration: options.duration !== undefined ? options.duration : 4000,
+    variant: "warning" as const,
+    duration: options.duration !== undefined ? options.duration : 5000,
   };
+}
+
+/**
+ * Create toast configurations for an array of warnings
+ * Used by API client to auto-show warnings from API responses
+ */
+export function createWarningsToasts(warnings: string[]): Array<ReturnType<typeof createWarningToast>> {
+  if (!warnings || warnings.length === 0) {
+    return [];
+  }
+  
+  // If multiple warnings, combine into single toast
+  if (warnings.length > 1) {
+    return [
+      createWarningToast("Some issues occurred", {
+        description: warnings.join(" • "),
+        duration: 6000, // Slightly longer for multiple warnings
+      }),
+    ];
+  }
+  
+  // Single warning
+  return [createWarningToast(warnings[0])];
+}
+
+/**
+ * Create toast for data quality issues
+ */
+export function createDataQualityToast(quality: string, isStale: boolean) {
+  if (isStale) {
+    return createWarningToast("Using cached data", {
+      description: "Data may be outdated. Refresh to get latest information.",
+    });
+  }
+  
+  if (quality === "degraded" || quality === "minimal") {
+    return createWarningToast("Limited data available", {
+      description: "Some information could not be loaded.",
+    });
+  }
+  
+  return null;
 }
 
 /**

@@ -2,9 +2,11 @@
  * Error Handling Middleware
  * 
  * Centralized error handling with user-friendly messages and retry logic
+ * Supports backend error codes and suggestions
  */
 
 import { APIClientError } from "./api-client";
+import { ErrorCode } from "@/types/api-responses";
 
 export interface ErrorHandlerOptions {
   showToast?: boolean;
@@ -16,11 +18,13 @@ export interface ErrorHandlerOptions {
 
 /**
  * Map error codes to user-friendly messages
+ * Includes backend-specific error codes
  */
 const ERROR_MESSAGES: Record<string, string> = {
   // Network errors
   NETWORK_ERROR: "Unable to connect to the server. Please check your internet connection.",
   TIMEOUT_ERROR: "The request took too long. Please try again.",
+  TIMEOUT: "The request took too long. Please try again.",
 
   // HTTP errors
   HTTP_400: "Invalid request. Please check your input and try again.",
@@ -34,9 +38,21 @@ const ERROR_MESSAGES: Record<string, string> = {
   HTTP_502: "Server is temporarily unavailable. Please try again later.",
   HTTP_503: "Service is temporarily unavailable. Please try again later.",
 
+  // Backend-specific error codes
+  [ErrorCode.DATA_NOT_FOUND]: "The requested data could not be found.",
+  [ErrorCode.DATA_STALE]: "The data is outdated. Refresh to get the latest information.",
+  [ErrorCode.CIRCUIT_BREAKER_OPEN]: "The service is temporarily unavailable. Please try again later.",
+  [ErrorCode.SCRAPING_ERROR]: "Unable to fetch external data. Please try again later.",
+  [ErrorCode.EXTERNAL_SERVICE_ERROR]: "An external service is unavailable. Please try again later.",
+  [ErrorCode.DATABASE_ERROR]: "A database error occurred. Please try again.",
+  [ErrorCode.RATE_LIMIT_ERROR]: "Too many requests. Please wait a moment and try again.",
+  [ErrorCode.VALIDATION_ERROR]: "The provided data is invalid. Please check your input.",
+  [ErrorCode.POPULATION_ERROR]: "Unable to load data. Please try again.",
+  [ErrorCode.PARTIAL_POPULATION]: "Some data could not be loaded. Results may be incomplete.",
+  [ErrorCode.INTERNAL_ERROR]: "An unexpected error occurred. Please try again.",
+
   // Application errors
   AUTH_ERROR: "Authentication failed. Please log in again.",
-  VALIDATION_ERROR: "Please check your input and try again.",
   CONFLICT_ERROR: "This action conflicts with existing data.",
   NOT_FOUND_ERROR: "The requested item was not found.",
 
@@ -75,10 +91,43 @@ export function getUserFriendlyMessage(error: Error | APIClientError): string {
 }
 
 /**
+ * Get suggestions from an APIClientError
+ */
+export function getErrorSuggestions(error: Error | APIClientError): string[] {
+  if (error instanceof APIClientError && error.suggestions) {
+    return error.suggestions;
+  }
+  return [];
+}
+
+/**
+ * Get retry-after time from an APIClientError (in seconds)
+ */
+export function getRetryAfterTime(error: Error | APIClientError): number | undefined {
+  if (error instanceof APIClientError && error.retryAfter) {
+    return error.retryAfter;
+  }
+  return undefined;
+}
+
+/**
  * Check if an error is retryable
  */
 export function isRetryableError(error: Error | APIClientError): boolean {
   if (error instanceof APIClientError) {
+    // Check for specific retryable error codes
+    const retryableCodes = [
+      ErrorCode.CIRCUIT_BREAKER_OPEN,
+      ErrorCode.DATABASE_ERROR,
+      ErrorCode.EXTERNAL_SERVICE_ERROR,
+      ErrorCode.SCRAPING_ERROR,
+      ErrorCode.RATE_LIMIT_ERROR,
+    ];
+    
+    if (error.code && retryableCodes.includes(error.code as ErrorCode)) {
+      return true;
+    }
+    
     // Retry on network errors and 5xx server errors
     if (!error.status) return true; // Network error
     if (error.status >= 500 && error.status < 600) return true;
@@ -95,20 +144,31 @@ export function isRetryableError(error: Error | APIClientError): boolean {
 
 /**
  * Calculate retry delay with exponential backoff
+ * Respects Retry-After header if present
  */
-export function getRetryDelay(attempt: number, baseDelay: number = 1000): number {
+export function getRetryDelay(
+  attempt: number, 
+  baseDelay: number = 1000,
+  retryAfter?: number
+): number {
+  // If server specified a retry-after, use that
+  if (retryAfter !== undefined && retryAfter > 0) {
+    return retryAfter * 1000; // Convert seconds to milliseconds
+  }
+  
   return Math.min(baseDelay * Math.pow(2, attempt), 10000); // Max 10 seconds
 }
 
 /**
  * Retry a function with exponential backoff
+ * Respects Retry-After header from rate limiting
  */
 export async function retryWithBackoff<T>(
   fn: () => Promise<T>,
   maxRetries: number = 3,
   baseDelay: number = 1000
 ): Promise<T> {
-  let lastError: Error | null = null;
+  let lastError: Error | APIClientError | null = null;
 
   for (let attempt = 0; attempt <= maxRetries; attempt++) {
     try {
@@ -126,8 +186,9 @@ export async function retryWithBackoff<T>(
         throw lastError;
       }
 
-      // Wait before retrying
-      const delay = getRetryDelay(attempt, baseDelay);
+      // Get delay, respecting Retry-After header if present
+      const retryAfter = lastError instanceof APIClientError ? lastError.retryAfter : undefined;
+      const delay = getRetryDelay(attempt, baseDelay, retryAfter);
       console.log(`Retry attempt ${attempt + 1}/${maxRetries} after ${delay}ms`);
       await new Promise(resolve => setTimeout(resolve, delay));
     }

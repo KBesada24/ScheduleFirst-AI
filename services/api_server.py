@@ -3,10 +3,11 @@ REST API Server for CUNY Schedule Optimizer
 Serves the React frontend with schedule optimization endpoints
 """
 from pydantic import BaseModel
-from fastapi import FastAPI, HTTPException, Depends
+from fastapi import FastAPI, HTTPException, Depends, Request
+from fastapi.responses import JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
 from contextlib import asynccontextmanager
-from typing import List, Dict, Any
+from typing import List, Dict, Any, Optional
 import uvicorn
 
 from mcp_server.config import settings
@@ -14,12 +15,24 @@ from mcp_server.services.supabase_service import supabase_service
 from mcp_server.services.constraint_solver import schedule_optimizer
 from mcp_server.services.sentiment_analyzer import sentiment_analyzer
 from mcp_server.utils.logger import get_logger
+from mcp_server.utils.exceptions import (
+    ScheduleOptimizerError,
+    DataNotFoundError,
+    DataStaleError,
+    DatabaseError,
+    CircuitBreakerOpenError,
+    RateLimitError,
+    ValidationError,
+    ScrapingError,
+    ExternalServiceError,
+)
 from mcp_server.models.schedule import ScheduleConstraints, OptimizedSchedule
 from mcp_server.models.course import CourseSearchFilter
-from mcp_server.models.api_models import ApiResponse, ResponseMetadata
+from mcp_server.models.api_models import ApiResponse, ResponseMetadata, ErrorResponse, DataQuality
 from mcp_server.services.data_population_service import data_population_service
 from mcp_server.services.data_freshness_service import data_freshness_service
 from mcp_server.tools.schedule_optimizer import compare_professors
+from mcp_server.utils.circuit_breaker import circuit_breaker_registry
 
 logger = get_logger(__name__)
 
@@ -76,6 +89,98 @@ app = FastAPI(
     lifespan=lifespan
 )
 
+
+# ============================================
+# GLOBAL EXCEPTION HANDLERS
+# ============================================
+
+@app.exception_handler(DataNotFoundError)
+async def data_not_found_handler(request: Request, exc: DataNotFoundError):
+    """Handle 404 Not Found errors"""
+    return JSONResponse(
+        status_code=404,
+        content=ErrorResponse.from_exception(exc).model_dump(),
+        headers={"X-Error-Code": exc.code},
+    )
+
+
+@app.exception_handler(ValidationError)
+async def validation_error_handler(request: Request, exc: ValidationError):
+    """Handle 400 Validation errors"""
+    return JSONResponse(
+        status_code=400,
+        content=ErrorResponse.from_exception(exc).model_dump(),
+        headers={"X-Error-Code": exc.code},
+    )
+
+
+@app.exception_handler(RateLimitError)
+async def rate_limit_handler(request: Request, exc: RateLimitError):
+    """Handle 429 Rate Limit errors"""
+    headers = {"X-Error-Code": exc.code}
+    if exc.retry_after:
+        headers["Retry-After"] = str(exc.retry_after)
+    
+    return JSONResponse(
+        status_code=429,
+        content=ErrorResponse.from_exception(exc).model_dump(),
+        headers=headers,
+    )
+
+
+@app.exception_handler(CircuitBreakerOpenError)
+async def circuit_breaker_handler(request: Request, exc: CircuitBreakerOpenError):
+    """Handle 503 Circuit Breaker Open errors"""
+    return JSONResponse(
+        status_code=503,
+        content=ErrorResponse.from_exception(exc).model_dump(),
+        headers={
+            "X-Error-Code": exc.code,
+            "Retry-After": str(exc.retry_after_seconds),
+        },
+    )
+
+
+@app.exception_handler(DatabaseError)
+async def database_error_handler(request: Request, exc: DatabaseError):
+    """Handle 503 Database errors"""
+    status_code = 503 if exc.is_retryable else 500
+    return JSONResponse(
+        status_code=status_code,
+        content=ErrorResponse.from_exception(exc).model_dump(),
+        headers={"X-Error-Code": exc.code},
+    )
+
+
+@app.exception_handler(ScrapingError)
+async def scraping_error_handler(request: Request, exc: ScrapingError):
+    """Handle 502 Scraping errors (external service issues)"""
+    return JSONResponse(
+        status_code=502,
+        content=ErrorResponse.from_exception(exc).model_dump(),
+        headers={"X-Error-Code": exc.code},
+    )
+
+
+@app.exception_handler(ExternalServiceError)
+async def external_service_handler(request: Request, exc: ExternalServiceError):
+    """Handle 502 External Service errors"""
+    return JSONResponse(
+        status_code=502,
+        content=ErrorResponse.from_exception(exc).model_dump(),
+        headers={"X-Error-Code": exc.code},
+    )
+
+
+@app.exception_handler(ScheduleOptimizerError)
+async def schedule_optimizer_error_handler(request: Request, exc: ScheduleOptimizerError):
+    """Catch-all handler for any ScheduleOptimizerError subclass not specifically handled"""
+    return JSONResponse(
+        status_code=500,
+        content=ErrorResponse.from_exception(exc).model_dump(),
+        headers={"X-Error-Code": exc.code},
+    )
+
 # CORS middleware for React frontend
 app.add_middleware(
     CORSMiddleware,
@@ -103,14 +208,29 @@ async def root():
 
 @app.get("/health")
 async def health():
-    """Health check endpoint"""
+    """Health check endpoint with circuit breaker status"""
     try:
         db_healthy = await supabase_service.health_check()
+        
+        # Get circuit breaker states
+        breaker_states = circuit_breaker_registry.get_all_states()
+        
+        # Determine overall status
+        any_circuit_open = any(state == "open" for state in breaker_states.values())
+        
+        if not db_healthy:
+            status = "unhealthy"
+        elif any_circuit_open:
+            status = "degraded"
+        else:
+            status = "healthy"
+        
         return {
-            "status": "healthy" if db_healthy else "degraded",
+            "status": status,
             "database": "connected" if db_healthy else "disconnected",
             "environment": settings.environment,
-            "gemini_api": "configured" if settings.gemini_api_key else "not configured"
+            "gemini_api": "configured" if settings.gemini_api_key else "not configured",
+            "circuit_breakers": breaker_states
         }
     except Exception as e:
         logger.error(f"Health check failed: {e}")
@@ -128,7 +248,8 @@ async def get_courses(
         # Auto-populate if requested
         was_populated = False
         if auto_populate:
-            was_populated = await data_population_service.ensure_course_data(semester, university)
+            population_result = await data_population_service.ensure_course_data(semester, university)
+            was_populated = population_result.success
         
         courses = await supabase_service.get_courses_by_semester(semester, university)
         
@@ -164,10 +285,11 @@ async def search_courses(
         # Auto-populate if filters provide enough context
         was_populated = False
         if auto_populate and filters.semester and filters.university:
-            was_populated = await data_population_service.ensure_course_data(
+            population_result = await data_population_service.ensure_course_data(
                 filters.semester, 
                 filters.university
             )
+            was_populated = population_result.success
             
         courses = await supabase_service.search_courses(filters)
         
@@ -241,9 +363,11 @@ async def optimize_schedule(request: ScheduleOptimizeRequest):
             )
         
         # Generate optimized schedules
-        schedules = await schedule_optimizer.generate_schedules(
-            all_sections,
-            request.constraints
+        schedules = await schedule_optimizer.generate_optimized_schedules(
+            required_courses=request.course_codes,
+            semester=request.semester,
+            university=request.university,
+            constraints=request.constraints
         )
         
         return {
@@ -271,10 +395,11 @@ async def get_professor(
         # Auto-populate if requested
         was_populated = False
         if auto_populate:
-            was_populated = await data_population_service.ensure_professor_data(
+            population_result = await data_population_service.ensure_professor_data(
                 professor_name, 
                 university
             )
+            was_populated = population_result.success
             
         professor = await supabase_service.get_professor_by_name(professor_name, university)
         
@@ -311,28 +436,47 @@ async def get_professor(
 class ProfessorComparisonRequest(BaseModel):
     professor_names: List[str]
     university: str
-    course_code: str = None
+    course_code: Optional[str] = None
 
 
 @app.post("/api/professor/compare", response_model=ApiResponse)
 async def compare_professors_endpoint(request: ProfessorComparisonRequest):
     """Compare multiple professors"""
     try:
-        # Use MCP tool logic
-        result = await compare_professors(
-            professor_names=request.professor_names,
-            university=request.university,
-            course_code=request.course_code
-        )
+        # Import the implementation function directly to avoid MCP tool wrapper
+        from mcp_server.tools.schedule_optimizer import _get_professor_grade_impl
         
-        if not result.get("success"):
-             raise HTTPException(status_code=400, detail=result.get("error"))
+        professors_data = []
+        for name in request.professor_names:
+            prof_grade = await _get_professor_grade_impl(name, request.university, request.course_code)
+            if prof_grade.get('success'):
+                professors_data.append(prof_grade)
+        
+        if not professors_data:
+            raise HTTPException(status_code=404, detail="No professor data found")
+        
+        # Sort by composite score
+        professors_data.sort(key=lambda p: p.get('composite_score', 0), reverse=True)
+        
+        # Generate recommendation
+        best_prof = professors_data[0]
+        recommendation = f"Based on ratings and reviews, {best_prof.get('professor_name')} " \
+                        f"(Grade: {best_prof.get('grade_letter')}) is recommended."
+        
+        result = {
+            'success': True,
+            'total_professors': len(professors_data),
+            'professors': professors_data,
+            'recommendation': recommendation,
+            'course_code': request.course_code,
+        }
              
         return ApiResponse(
             data=result,
             metadata=ResponseMetadata(
                 source="hybrid",
-                is_fresh=True, # Comparison fetches fresh data
+                last_updated=None,
+                is_fresh=True,
                 auto_populated=True,
                 count=len(request.professor_names)
             )
@@ -385,7 +529,7 @@ async def validate_schedule_action(request: ScheduleValidationRequest):
 async def chat_with_ai(message: Dict[str, Any]):
     """Chat with AI assistant for schedule recommendations"""
     try:
-        import google.generativeai as genai
+        import google.generativeai as genai  # type: ignore[import]
         
         user_message = message.get("message", "")
         context = message.get("context", {})
@@ -394,8 +538,8 @@ async def chat_with_ai(message: Dict[str, Any]):
             raise HTTPException(status_code=400, detail="Message is required")
         
         # Configure Gemini API
-        genai.configure(api_key=settings.gemini_api_key)
-        model = genai.GenerativeModel('gemini-2.0-flash')
+        genai.configure(api_key=settings.gemini_api_key)  # type: ignore[attr-defined]
+        model = genai.GenerativeModel('gemini-2.0-flash')  # type: ignore[attr-defined]
         
         # Build context for the AI
         current_courses = context.get("currentCourses", [])
@@ -439,8 +583,8 @@ Keep responses conversational and under 150 words."""
 
 class SyncRequest(BaseModel):
     entity_type: str
-    semester: str = None
-    university: str = None
+    semester: Optional[str] = None
+    university: Optional[str] = None
     force: bool = False
 
 
@@ -453,11 +597,12 @@ async def admin_sync(request: SyncRequest):
             if not request.semester:
                 raise HTTPException(status_code=400, detail="Semester required for course sync")
             
-            success = await data_population_service.ensure_course_data(
+            population_result = await data_population_service.ensure_course_data(
                 request.semester, 
                 request.university or "Baruch College",
                 force=request.force
             )
+            success = population_result.success
         else:
             raise HTTPException(status_code=400, detail=f"Unsupported entity type: {request.entity_type}")
             
