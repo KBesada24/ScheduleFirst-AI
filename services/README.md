@@ -176,6 +176,42 @@ RateMyProfessors → Scraper → Review Storage
 User Request → MCP Server → Gemini AI → Optimized Schedule
 ```
 
+## 🔄 Hybrid Data Architecture
+
+The backend uses a **database-first + on-demand population** strategy:
+
+### Data Access Flow
+
+1. **Cache Check** - In-memory LRU cache (< 10ms)
+2. **Database Query** - Supabase PostgreSQL (< 100ms)
+3. **Freshness Check** - Is data within TTL?
+4. **Auto-Population** - If stale/missing, scrape fresh data (< 10s)
+
+### Data Freshness TTLs
+
+| Entity | TTL | 
+|--------|-----|
+| Course Data | 7 days |
+| Professor Data | 7 days |
+| Review Data | 30 days |
+| Cache Entries | 300 seconds |
+
+### Key Services
+
+| Service | Purpose |
+|---------|---------|
+| `DataFreshnessService` | Checks if data is stale based on TTLs |
+| `DataPopulationService` | Coordinates on-demand scraping |
+| `CacheManager` | In-memory LRU cache with TTL |
+
+### Error Resilience
+
+- **Circuit Breakers** - Prevent cascading failures to external services
+- **Fallback Chain** - Database → Cache → Scraper → Partial data with warnings
+- **Retry Logic** - Exponential backoff for transient failures
+
+See [Architecture Documentation](../docs/architecture/README.md) for detailed diagrams.
+
 ## 🔧 Configuration
 
 All configuration is managed via environment variables in `.env`:
@@ -216,6 +252,46 @@ View detailed logs:
 tail -f logs/app.log
 ```
 
+## 🔧 Troubleshooting
+
+### Common Issues
+
+| Issue | Solution |
+|-------|----------|
+| Database connection fails | Check `SUPABASE_URL` and `SUPABASE_SERVICE_ROLE_KEY` |
+| Scraping timeout | Increase `SCRAPER_REQUEST_DELAY`, check Chrome installation |
+| Circuit breaker open | Wait 60s for recovery, check external service status |
+| Cache misses | Check cache TTL settings, verify cache is warming |
+| Slow responses | Check cache hit rate, optimize database queries |
+
+### Health Check
+
+```bash
+curl http://localhost:8000/health
+```
+
+Expected healthy response:
+```json
+{
+  "status": "healthy",
+  "database": "connected",
+  "circuit_breakers": {
+    "ratemyprof": "closed",
+    "supabase": "closed"
+  }
+}
+```
+
+### Manual Sync
+
+```bash
+curl -X POST http://localhost:8000/api/admin/sync \
+  -H "Content-Type: application/json" \
+  -d '{"entity_type":"courses","semester":"Spring 2025","university":"Baruch College"}'
+```
+
+See [Operations Runbook](../docs/RUNBOOK.md) for detailed troubleshooting procedures.
+
 ## 🚢 Deployment
 
 ### Railway / Fly.io
@@ -242,10 +318,13 @@ docker run -p 8000:8000 --env-file .env cuny-mcp-server
 
 ## 📚 Additional Documentation
 
-- [API Documentation](../docs/API.md)
-- [Architecture Guide](../docs/ARCHITECTURE.md)
-- [Database Schema](../docs/DATABASE.md)
-- [MCP Tools Reference](../docs/MCP_TOOLS.md)
+- [Architecture Guide](../docs/architecture/README.md)
+- [Data Flow Diagrams](../docs/architecture/data-flow.md)
+- [Deployment Guide](../docs/DEPLOYMENT.md)
+- [Monitoring Guide](../docs/MONITORING.md)
+- [Operations Runbook](../docs/RUNBOOK.md)
+- [Deployment Checklist](../docs/deployment-checklist.md)
+- [API Documentation](../docs/API_DOCUMENTATION.md)
 
 ## 🤝 Contributing
 
