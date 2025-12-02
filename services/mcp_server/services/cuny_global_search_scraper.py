@@ -24,13 +24,13 @@ from ..config import settings
 from ..utils.logger import get_logger
 from ..utils.validators import parse_time_string, normalize_professor_name
 from ..utils.exceptions import ScrapingError, ExternalServiceError
-from ..utils.circuit_breaker import circuit_registry
+from ..utils.circuit_breaker import circuit_breaker_registry
 
 
 logger = get_logger(__name__)
 
 # Get the CUNY scraper circuit breaker
-cuny_breaker = circuit_registry.get("cuny_scraper")
+cuny_breaker = circuit_breaker_registry.get("cuny_scraper")
 
 
 class CUNYGlobalSearchScraper:
