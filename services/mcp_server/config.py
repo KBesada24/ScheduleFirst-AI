@@ -105,6 +105,9 @@ class Settings(BaseSettings):
     # Monitoring & Error Tracking
     sentry_dsn: Optional[str] = Field(default=None, alias="SENTRY_DSN")
     
+    # Admin API Key (for protected admin endpoints)
+    admin_api_key: Optional[str] = Field(default=None, alias="ADMIN_API_KEY")
+    
     model_config = SettingsConfigDict(
         env_file=Path(__file__).parent.parent.parent / ".env",  # Points to root .env
         env_file_encoding="utf-8",

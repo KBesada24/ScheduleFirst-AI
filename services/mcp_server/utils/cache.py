@@ -5,7 +5,7 @@ Provides in-memory LRU cache with TTL, statistics, and warming support.
 import json
 import hashlib
 from typing import Any, Optional, Callable, List, Dict
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from functools import wraps
 import asyncio
 
@@ -138,6 +138,7 @@ class CacheManager:
             max_size=settings.cache_max_size
         )
         self._warming_in_progress = False
+        self._warming_lock = asyncio.Lock()
         self._warm_callbacks: List[Callable] = []
         logger.info(f"Cache initialized with TTL: {settings.cache_ttl}s, max_size: {settings.cache_max_size}")
     
@@ -197,14 +198,15 @@ class CacheManager:
         Calls all registered warming callbacks.
         Returns summary of warming results.
         """
-        if self._warming_in_progress:
-            logger.warning("Cache warming already in progress, skipping")
-            return {"status": "skipped", "reason": "already_in_progress"}
+        async with self._warming_lock:
+            if self._warming_in_progress:
+                logger.warning("Cache warming already in progress, skipping")
+                return {"status": "skipped", "reason": "already_in_progress"}
+            self._warming_in_progress = True
         
-        self._warming_in_progress = True
         results = {
             "status": "completed",
-            "started_at": datetime.utcnow().isoformat(),
+            "started_at": datetime.now(timezone.utc).isoformat(),
             "callbacks_executed": 0,
             "total_entries_added": 0,
             "errors": [],
@@ -224,7 +226,7 @@ class CacheManager:
                     logger.error(error_msg)
                     results["errors"].append(error_msg)
             
-            results["completed_at"] = datetime.utcnow().isoformat()
+            results["completed_at"] = datetime.now(timezone.utc).isoformat()
             logger.info(
                 f"Cache warming completed: {results['callbacks_executed']} callbacks, "
                 f"{results['total_entries_added']} entries added"

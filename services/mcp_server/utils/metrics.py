@@ -131,7 +131,7 @@ class MetricsCollector:
             return
             
         self._initialized = True
-        self._metrics_lock = asyncio.Lock()
+        self._metrics_lock: Optional[asyncio.Lock] = None
         
         # API request metrics by endpoint
         self._request_metrics: Dict[str, RequestMetrics] = defaultdict(RequestMetrics)
@@ -158,6 +158,9 @@ class MetricsCollector:
         # Start time for uptime calculation
         self._start_time = datetime.utcnow()
         
+        # Cache stats (updated externally)
+        self._cache_stats: Dict[str, Any] = {}
+        
         # Alert thresholds
         self._thresholds = {
             "cache_hit_rate_min": 50.0,  # Warn if below 50%
@@ -168,6 +171,12 @@ class MetricsCollector:
         
         logger.info("MetricsCollector initialized")
     
+    def _get_lock(self) -> asyncio.Lock:
+        """Lazily initialize and return the asyncio lock"""
+        if self._metrics_lock is None:
+            self._metrics_lock = asyncio.Lock()
+        return self._metrics_lock
+    
     async def record_request(
         self, 
         endpoint: str, 
@@ -177,7 +186,7 @@ class MetricsCollector:
     ) -> None:
         """Record an API request"""
         key = f"{method} {endpoint}"
-        async with self._metrics_lock:
+        async with self._get_lock():
             self._request_metrics[key].record_request(status_code, duration_ms)
             
             # Track hourly distribution
@@ -199,7 +208,7 @@ class MetricsCollector:
         details: Optional[Dict[str, Any]] = None
     ) -> None:
         """Record a background job execution"""
-        async with self._metrics_lock:
+        async with self._get_lock():
             self._job_metrics[job_name].record_execution(success, duration_ms)
         
         log_msg = f"Job '{job_name}' {'succeeded' if success else 'failed'} in {duration_ms:.2f}ms"
@@ -215,7 +224,7 @@ class MetricsCollector:
         context: Optional[Dict[str, Any]] = None
     ) -> None:
         """Record an error occurrence"""
-        async with self._metrics_lock:
+        async with self._get_lock():
             self._error_counts[error_type] += 1
             
             error_record = {
@@ -236,7 +245,7 @@ class MetricsCollector:
         duration_ms: float
     ) -> None:
         """Record a database query execution"""
-        async with self._metrics_lock:
+        async with self._get_lock():
             self._query_metrics[query_name].record(duration_ms)
         
         # Log slow queries
@@ -252,13 +261,13 @@ class MetricsCollector:
         success: bool
     ) -> None:
         """Record a scraping operation"""
-        async with self._metrics_lock:
+        async with self._get_lock():
             key = "success" if success else "failure"
             self._scraping_metrics[scraper_type][key] += 1
     
     async def record_course_request(self, course_code: str, semester: str) -> None:
         """Track course usage for analytics"""
-        async with self._metrics_lock:
+        async with self._get_lock():
             self._course_requests[course_code] += 1
             self._semester_requests[semester] += 1
     
@@ -290,7 +299,7 @@ class MetricsCollector:
                     logger.warning(alert["message"])
         
         # Check overall error rate
-        async with self._metrics_lock:
+        async with self._get_lock():
             total_success = sum(m.success_count for m in self._request_metrics.values())
             total_errors = sum(m.error_count for m in self._request_metrics.values())
             total_requests = total_success + total_errors
@@ -329,7 +338,7 @@ class MetricsCollector:
     
     async def get_all_metrics(self, cache_stats: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
         """Get all collected metrics"""
-        async with self._metrics_lock:
+        async with self._get_lock():
             uptime_seconds = (datetime.utcnow() - self._start_time).total_seconds()
             
             # Calculate totals
@@ -382,7 +391,7 @@ class MetricsCollector:
         """Get a health summary for quick status checks"""
         alerts = await self.check_thresholds(cache_stats)
         
-        async with self._metrics_lock:
+        async with self._get_lock():
             total_requests = sum(m.timing.count for m in self._request_metrics.values())
             total_errors = sum(m.error_count for m in self._request_metrics.values())
             
@@ -411,7 +420,7 @@ class MetricsCollector:
     
     async def reset_metrics(self) -> None:
         """Reset all metrics (useful for testing)"""
-        async with self._metrics_lock:
+        async with self._get_lock():
             self._request_metrics.clear()
             self._job_metrics.clear()
             self._error_counts.clear()
@@ -446,9 +455,12 @@ class Timer:
         self.duration_ms = (time.perf_counter() - self.start_time) * 1000
 
 
-async def record_query_timing(query_name: str):
+from functools import wraps
+
+def record_query_timing(query_name: str):
     """Decorator for timing database queries"""
     def decorator(func):
+        @wraps(func)
         async def wrapper(*args, **kwargs):
             timer = Timer()
             with timer:

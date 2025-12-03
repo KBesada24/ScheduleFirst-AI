@@ -7,6 +7,7 @@ from pydantic import BaseModel, Field
 from fastapi import FastAPI, HTTPException, Depends, Request
 from fastapi.responses import JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from starlette.middleware.base import BaseHTTPMiddleware
 from contextlib import asynccontextmanager
 from typing import List, Dict, Any, Optional
@@ -39,6 +40,35 @@ from mcp_server.tools.schedule_optimizer import compare_professors
 from mcp_server.utils.circuit_breaker import circuit_breaker_registry
 
 logger = get_logger(__name__)
+
+# Security for admin endpoints
+security = HTTPBearer(auto_error=False)
+
+
+async def verify_admin_token(
+    credentials: Optional[HTTPAuthorizationCredentials] = Depends(security)
+) -> HTTPAuthorizationCredentials:
+    """Verify admin API token for protected endpoints"""
+    if not settings.admin_api_key:
+        raise HTTPException(
+            status_code=503,
+            detail="Admin API key not configured. Set ADMIN_API_KEY environment variable."
+        )
+    
+    if not credentials:
+        raise HTTPException(
+            status_code=401,
+            detail="Missing authorization header",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+    
+    if credentials.credentials != settings.admin_api_key:
+        raise HTTPException(
+            status_code=403,
+            detail="Invalid admin credentials"
+        )
+    
+    return credentials
 
 
 class ScheduleOptimizeRequest(BaseModel):
@@ -710,7 +740,10 @@ class SyncRequest(BaseModel):
 
 
 @app.post("/api/admin/sync")
-async def admin_sync(request: SyncRequest):
+async def admin_sync(
+    request: SyncRequest,
+    credentials: HTTPAuthorizationCredentials = Depends(verify_admin_token)
+):
     """Trigger manual data sync"""
     try:
         success = False
@@ -756,7 +789,9 @@ async def admin_sync_status(
 
 
 @app.get("/api/admin/analytics")
-async def admin_analytics():
+async def admin_analytics(
+    credentials: HTTPAuthorizationCredentials = Depends(verify_admin_token)
+):
     """Get usage analytics for admin dashboard"""
     try:
         cache_stats = cache_manager.get_stats()
@@ -783,9 +818,12 @@ async def admin_analytics():
 
 
 @app.post("/api/admin/cache/clear")
-async def admin_cache_clear():
+async def admin_cache_clear(
+    credentials: HTTPAuthorizationCredentials = Depends(verify_admin_token)
+):
     """Clear the application cache"""
     try:
+        logger.warning("Cache clear requested by admin")
         stats_before = cache_manager.get_stats()
         await cache_manager.clear()
         stats_after = cache_manager.get_stats()
@@ -826,14 +864,6 @@ async def submit_feedback(feedback: FeedbackRequest):
                 "message": feedback.message[:100],  # Truncate for log
                 "page": feedback.page,
             }
-        )
-        
-        # Track in metrics
-        await metrics_collector.record_request(
-            endpoint="/api/feedback",
-            method="POST",
-            status_code=200,
-            duration_ms=0  # Not a real request timing
         )
         
         return {

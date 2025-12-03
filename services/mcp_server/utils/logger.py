@@ -79,7 +79,7 @@ def setup_sentry() -> None:
     except ImportError:
         logging.getLogger(__name__).warning(
             "Sentry DSN configured but sentry-sdk not installed. "
-            "Install with: pip install sentry-sdk[fastapi]"
+            "Install with: pip install sentry-sdk"
         )
     except Exception as e:
         logging.getLogger(__name__).error(f"Failed to initialize Sentry: {e}")

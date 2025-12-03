@@ -27,9 +27,7 @@ def archive_old_logs(log_dir: Path, days_old: int = 7) -> int:
     cutoff_date = datetime.now() - timedelta(days=days_old)
     
     for log_file in log_dir.glob("*.log"):
-        # Skip already compressed files
-        if log_file.suffix == ".gz":
-            continue
+        # Check file modification time
         
         # Check file modification time
         mtime = datetime.fromtimestamp(log_file.stat().st_mtime)
@@ -37,12 +35,19 @@ def archive_old_logs(log_dir: Path, days_old: int = 7) -> int:
             # Compress the file
             archive_name = f"{log_file.name}.{mtime.strftime('%Y%m%d')}.gz"
             archive_path = log_dir / archive_name
-            
-            print(f"Archiving {log_file.name} -> {archive_name}")
+            archive_name = f"{log_file.stem}.{mtime.strftime('%Y%m%d_%H%M%S')}.gz"
+            archive_path = log_dir / archive_name
             
             with open(log_file, 'rb') as f_in:
                 with gzip.open(archive_path, 'wb') as f_out:
                     shutil.copyfileobj(f_in, f_out)
+            
+            # Verify the archive was created successfully
+            if not archive_path.exists() or archive_path.stat().st_size == 0:
+                print(f"ERROR: Failed to create archive for {log_file.name}")
+                if archive_path.exists():
+                    archive_path.unlink()
+                return archived
             
             # Clear the original file (don't delete, just truncate)
             log_file.write_text("")
@@ -62,9 +67,12 @@ def remove_old_archives(log_dir: Path, days_old: int = 30) -> int:
     for archive_file in log_dir.glob("*.gz"):
         mtime = datetime.fromtimestamp(archive_file.stat().st_mtime)
         if mtime < cutoff_date:
-            print(f"Removing old archive: {archive_file.name}")
-            archive_file.unlink()
-            removed += 1
+            try:
+                print(f"Removing old archive: {archive_file.name}")
+                archive_file.unlink()
+                removed += 1
+            except Exception as e:
+                print(f"ERROR: Failed to remove {archive_file.name}: {e}")
     
     return removed
 
@@ -80,20 +88,23 @@ def get_log_stats(log_dir: Path) -> dict:
     
     for file in log_dir.iterdir():
         if file.is_file():
-            size_mb = file.stat().st_size / (1024 * 1024)
-            stats["total_files"] += 1
-            stats["total_size_mb"] += size_mb
-            
-            file_info = {
-                "name": file.name,
-                "size_mb": round(size_mb, 2),
-                "modified": datetime.fromtimestamp(file.stat().st_mtime).isoformat(),
-            }
-            
-            if file.suffix == ".gz":
-                stats["archive_files"].append(file_info)
-            else:
-                stats["log_files"].append(file_info)
+            try:
+                size_mb = file.stat().st_size / (1024 * 1024)
+                stats["total_files"] += 1
+                stats["total_size_mb"] += size_mb
+                
+                file_info = {
+                    "name": file.name,
+                    "size_mb": round(size_mb, 2),
+                    "modified": datetime.fromtimestamp(file.stat().st_mtime).isoformat(),
+                }
+                
+                if file.suffix == ".gz":
+                    stats["archive_files"].append(file_info)
+                else:
+                    stats["log_files"].append(file_info)
+            except Exception as e:
+                print(f"WARNING: Failed to stat {file.name}: {e}")
     
     stats["total_size_mb"] = round(stats["total_size_mb"], 2)
     return stats
@@ -101,7 +112,10 @@ def get_log_stats(log_dir: Path) -> dict:
 
 def main():
     parser = argparse.ArgumentParser(description="Log cleanup and archival utility")
-    parser.add_argument(
+    args = parser.parse_args()
+
+    if args.archive_days >= args.remove_days:
+        parser.error("--archive-days must be less than --remove-days")
         "--archive-days", 
         type=int, 
         default=7,

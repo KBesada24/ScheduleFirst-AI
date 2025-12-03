@@ -64,10 +64,11 @@ async def scrape_reviews_job(
                             uni
                         )
                         
-                        # Record scraping success
-                        await metrics_collector.record_scraping("ratemyprof", success=True)
-                        
                         if prof_data:
+                            # Record scraping success only when data is retrieved
+                            await metrics_collector.record_scraping("ratemyprof", success=True)
+                            
+                            # Create new professor
                             # Create new professor
                             from mcp_server.models.professor import ProfessorCreate
                             prof_info = prof_data['professor']
@@ -80,7 +81,9 @@ async def scrape_reviews_job(
                                     ratemyprof_id=prof_info.get('legacyId'),
                                     average_rating=prof_info.get('avgRating'),
                                     average_difficulty=prof_info.get('avgDifficulty'),
-                                    review_count=prof_info.get('numRatings')
+                                    review_count=prof_info.get('numRatings'),
+                                    grade_letter=None,
+                                    composite_score=None
                                 )
                             )
                             
@@ -114,11 +117,11 @@ async def scrape_reviews_job(
                         uni
                     )
                     
-                    # Record scraping success
-                    await metrics_collector.record_scraping("ratemyprof", success=True)
-                    
                     if not prof_data:
                         continue
+                    
+                    # Record scraping success only after confirming valid data
+                    await metrics_collector.record_scraping("ratemyprof", success=True)
                     
                     reviews = prof_data['reviews']
                     
