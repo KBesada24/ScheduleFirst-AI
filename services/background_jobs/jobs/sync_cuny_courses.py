@@ -1,12 +1,14 @@
 """
 Background job to sync CUNY courses from Global Search
 """
+import time
 from datetime import datetime
-from typing import List, Dict, Any
+from typing import List, Dict, Any, Optional
 
 from mcp_server.services.cuny_global_search_scraper import cuny_scraper
 from mcp_server.services.supabase_service import supabase_service
 from mcp_server.utils.logger import get_logger
+from mcp_server.utils.metrics import metrics_collector
 
 
 logger = get_logger(__name__)
@@ -29,7 +31,7 @@ async def sync_courses_job(
     logger.info(f"STARTING: CUNY Course Sync Job (Semester: {semester or 'All'})")
     logger.info("=" * 60)
     
-    start_time = datetime.now()
+    start_time = time.perf_counter()
     
     try:
         # Determine semesters to sync
@@ -52,6 +54,9 @@ async def sync_courses_job(
                 # Note: cuny_scraper currently scrapes all universities for a semester
                 # If we want to filter by university, we'd need to update the scraper or filter results here
                 courses = await cuny_scraper.scrape_semester_courses(sem)
+                
+                # Record scraping success
+                await metrics_collector.record_scraping("cuny_courses", success=True)
                 
                 if not courses:
                     logger.warning(f"No courses found for {sem}")
@@ -111,31 +116,59 @@ async def sync_courses_job(
             except Exception as e:
                 logger.error(f"Error syncing semester {sem}: {e}")
                 errors.append(f"{sem}: {str(e)}")
+                
+                # Record scraping failure
+                await metrics_collector.record_scraping("cuny_courses", success=False)
+                
                 # Mark as failed
                 target_uni = university or "all" # This is imperfect but...
                 await supabase_service.update_sync_metadata(
                     "courses", sem, target_uni, "failed", str(e)
                 )
         
-        duration = (datetime.now() - start_time).total_seconds()
+        duration_ms = (time.perf_counter() - start_time) * 1000
+        duration_seconds = duration_ms / 1000
         
         logger.info("=" * 60)
         logger.info("COMPLETED: CUNY Course Sync Job")
         logger.info(f"Total courses synced: {total_courses}")
         logger.info(f"Total sections synced: {total_sections}")
-        logger.info(f"Duration: {duration:.2f} seconds")
+        logger.info(f"Duration: {duration_seconds:.2f} seconds")
         logger.info("=" * 60)
         
+        # Record job execution metrics
+        success = len(errors) == 0
+        await metrics_collector.record_job_execution(
+            job_name="sync_cuny_courses",
+            success=success,
+            duration_ms=duration_ms,
+            details={
+                "courses_synced": total_courses,
+                "sections_synced": total_sections,
+                "semesters": semesters,
+            }
+        )
+        
         return {
-            'success': len(errors) == 0,
+            'success': success,
             'courses_synced': total_courses,
             'sections_synced': total_sections,
-            'duration_seconds': duration,
+            'duration_seconds': duration_seconds,
             'errors': errors
         }
     
     except Exception as e:
+        duration_ms = (time.perf_counter() - start_time) * 1000
         logger.error(f"Error in course sync job: {e}", exc_info=True)
+        
+        # Record job failure
+        await metrics_collector.record_job_execution(
+            job_name="sync_cuny_courses",
+            success=False,
+            duration_ms=duration_ms,
+            details={"error": str(e)}
+        )
+        
         return {
             'success': False,
             'error': str(e)

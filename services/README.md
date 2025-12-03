@@ -230,14 +230,117 @@ All configuration is managed via environment variables in `.env`:
 Logs are written to:
 - **Console:** Structured JSON logs (production) or text (development)
 - **Files:** 
-  - `logs/app.log` - All logs (production only)
-  - `logs/error.log` - Error logs only
+  - `logs/app.log` - All logs (production only, with rotation)
+  - `logs/error.log` - Error logs only (with rotation)
 
 Configure via:
 ```env
 LOG_LEVEL=INFO
 LOG_FORMAT=json
+LOG_MAX_BYTES=10485760  # 10MB per file
+LOG_BACKUP_COUNT=5      # Keep 5 backup files
+SENTRY_DSN=https://...  # Optional: Sentry error tracking
 ```
+
+### Log Rotation
+
+Logs automatically rotate when they reach `LOG_MAX_BYTES`. Old log files are preserved as backups.
+
+### Log Cleanup
+
+Use the cleanup script to archive and remove old logs:
+
+```bash
+# View log stats
+python scripts/cleanup_logs.py --stats-only
+
+# Archive logs older than 7 days, remove archives older than 30 days
+python scripts/cleanup_logs.py
+
+# Custom retention periods
+python scripts/cleanup_logs.py --archive-days 3 --remove-days 14
+
+# Dry run (preview actions)
+python scripts/cleanup_logs.py --dry-run
+```
+
+### Error Tracking with Sentry
+
+If `SENTRY_DSN` is configured, errors are automatically sent to Sentry for aggregation and alerting.
+
+## 📊 Monitoring & Metrics
+
+The backend exposes comprehensive monitoring endpoints:
+
+### Health Endpoints
+
+| Endpoint | Description |
+|----------|-------------|
+| `GET /health` | Overall system health with metrics summary |
+| `GET /health/metrics` | Detailed metrics (requests, cache, jobs, errors) |
+| `GET /health/cache` | Cache statistics and configuration |
+| `GET /health/jobs` | Background job status and history |
+
+### Metrics Collected
+
+- **API Requests:** Count, response times, error rates per endpoint
+- **Cache:** Hit rate, evictions, size
+- **Background Jobs:** Run count, success/failure rate, duration
+- **Scraping:** Success/failure count by scraper type
+- **Usage Analytics:** Top courses, semesters, hourly distribution
+
+### Example: View Metrics
+
+```bash
+curl http://localhost:8000/health/metrics
+```
+
+Response:
+```json
+{
+  "uptime_seconds": 3600.5,
+  "uptime_human": "1:00:00",
+  "requests": {
+    "total": 1500,
+    "error_rate": 1.2,
+    "by_endpoint": {...}
+  },
+  "cache": {
+    "hit_rate": 85.5,
+    "total_entries": 250,
+    "hits": 1200,
+    "misses": 200
+  },
+  "jobs": {
+    "sync_cuny_courses": {
+      "run_count": 5,
+      "success_count": 5,
+      "last_run": "2025-12-03T02:00:00Z"
+    }
+  }
+}
+```
+
+### Alert Thresholds
+
+The system logs warnings when thresholds are breached:
+
+| Metric | Threshold | Severity |
+|--------|-----------|----------|
+| Cache hit rate | < 50% | Warning |
+| Error rate | > 10% | Error |
+| Avg response time | > 2000ms | Warning |
+| Slow queries | > 500ms | Warning |
+
+### Admin Endpoints
+
+| Endpoint | Description |
+|----------|-------------|
+| `POST /api/admin/sync` | Trigger manual data sync |
+| `GET /api/admin/sync-status` | Get sync metadata |
+| `GET /api/admin/analytics` | Usage analytics summary |
+| `POST /api/admin/cache/clear` | Clear the cache |
+| `POST /api/feedback` | Submit user feedback |
 
 ## 🐛 Debugging
 
@@ -324,7 +427,8 @@ docker run -p 8000:8000 --env-file .env cuny-mcp-server
 - [Monitoring Guide](../docs/MONITORING.md)
 - [Operations Runbook](../docs/RUNBOOK.md)
 - [Deployment Checklist](../docs/deployment-checklist.md)
-- [API Documentation](../docs/API_DOCUMENTATION.md)
+- [Backend REST API](../docs/BACKEND_API.md)
+- [Frontend API Documentation](../docs/API_DOCUMENTATION.md)
 
 ## 🤝 Contributing
 

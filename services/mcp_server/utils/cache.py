@@ -1,9 +1,10 @@
 """
-Caching utilities for the MCP server
+Caching utilities for the MCP server.
+Provides in-memory LRU cache with TTL, statistics, and warming support.
 """
 import json
 import hashlib
-from typing import Any, Optional, Callable
+from typing import Any, Optional, Callable, List, Dict
 from datetime import datetime, timedelta
 from functools import wraps
 import asyncio
@@ -97,7 +98,6 @@ class InMemoryCache:
         async with self._lock:
             self._cache.clear()
             self._access_order.clear()
-            # Reset stats? Maybe keep them. Let's keep them for now.
     
     async def cleanup_expired(self) -> int:
         """Remove expired entries and return count"""
@@ -117,20 +117,29 @@ class InMemoryCache:
     
     def get_stats(self) -> dict[str, Any]:
         """Get cache statistics"""
+        total = self._stats["hits"] + self._stats["misses"]
+        hit_rate = (self._stats["hits"] / total * 100) if total > 0 else 0.0
+        
         return {
             "total_entries": len(self._cache),
             "max_size": self.max_size,
             "default_ttl": self.default_ttl,
+            "hit_rate": round(hit_rate, 2),
             **self._stats
         }
 
 
 class CacheManager:
-    """Centralized cache management"""
+    """Centralized cache management with warming support"""
     
     def __init__(self):
-        self._cache = InMemoryCache(default_ttl=settings.cache_ttl)
-        logger.info(f"Cache initialized with TTL: {settings.cache_ttl}s")
+        self._cache = InMemoryCache(
+            default_ttl=settings.cache_ttl,
+            max_size=settings.cache_max_size
+        )
+        self._warming_in_progress = False
+        self._warm_callbacks: List[Callable] = []
+        logger.info(f"Cache initialized with TTL: {settings.cache_ttl}s, max_size: {settings.cache_max_size}")
     
     def generate_key(self, prefix: str, *args: Any, **kwargs: Any) -> str:
         """Generate cache key from function arguments"""
@@ -176,21 +185,72 @@ class CacheManager:
     def get_stats(self) -> dict[str, Any]:
         """Get cache statistics"""
         return self._cache.get_stats()
+    
+    def register_warm_callback(self, callback: Callable) -> None:
+        """Register a callback to be called during cache warming"""
+        self._warm_callbacks.append(callback)
+        logger.debug(f"Registered cache warming callback: {callback.__name__}")
+    
+    async def warm_cache(self) -> Dict[str, Any]:
+        """
+        Pre-populate cache with common data.
+        Calls all registered warming callbacks.
+        Returns summary of warming results.
+        """
+        if self._warming_in_progress:
+            logger.warning("Cache warming already in progress, skipping")
+            return {"status": "skipped", "reason": "already_in_progress"}
         
-    async def warm_cache(self, entity_type: str, **kwargs: Any) -> int:
-        """
-        Pre-populate cache for specific entities.
-        To be implemented by specific services or a central warming logic.
-        Returns number of entries warmed.
-        """
-        # This is a placeholder for future implementation
-        return 0
+        self._warming_in_progress = True
+        results = {
+            "status": "completed",
+            "started_at": datetime.utcnow().isoformat(),
+            "callbacks_executed": 0,
+            "total_entries_added": 0,
+            "errors": [],
+        }
+        
+        try:
+            logger.info(f"Starting cache warming with {len(self._warm_callbacks)} callbacks")
+            
+            for callback in self._warm_callbacks:
+                try:
+                    entries_added = await callback()
+                    results["callbacks_executed"] += 1
+                    results["total_entries_added"] += entries_added or 0
+                    logger.info(f"Cache warming callback '{callback.__name__}' added {entries_added or 0} entries")
+                except Exception as e:
+                    error_msg = f"Cache warming callback '{callback.__name__}' failed: {e}"
+                    logger.error(error_msg)
+                    results["errors"].append(error_msg)
+            
+            results["completed_at"] = datetime.utcnow().isoformat()
+            logger.info(
+                f"Cache warming completed: {results['callbacks_executed']} callbacks, "
+                f"{results['total_entries_added']} entries added"
+            )
+            
+        finally:
+            self._warming_in_progress = False
+        
+        return results
+    
+    def get_ttl_for_entity(self, entity_type: str) -> int:
+        """Get the appropriate TTL for an entity type"""
+        ttl_map = {
+            "courses": settings.cache_ttl_courses,
+            "professors": settings.cache_ttl_professors,
+            "reviews": settings.cache_ttl_reviews,
+            "schedules": settings.cache_ttl_schedules,
+        }
+        return ttl_map.get(entity_type, settings.cache_ttl)
     
     def cached(
         self,
         prefix: str,
         ttl: Optional[int] = None,
-        key_func: Optional[Callable] = None
+        key_func: Optional[Callable] = None,
+        entity_type: Optional[str] = None
     ):
         """Decorator to cache function results"""
         def decorator(func: Callable):
@@ -207,9 +267,14 @@ class CacheManager:
                 if cached_value is not None:
                     return cached_value
                 
+                # Determine TTL
+                effective_ttl = ttl
+                if effective_ttl is None and entity_type:
+                    effective_ttl = self.get_ttl_for_entity(entity_type)
+                
                 # Call function and cache result
                 result = await func(*args, **kwargs)
-                await self.set(cache_key, result, ttl)
+                await self.set(cache_key, result, effective_ttl)
                 
                 return result
             

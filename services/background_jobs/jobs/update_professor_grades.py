@@ -1,18 +1,19 @@
 """
 Background job to update professor grades based on sentiment analysis
 """
+import time
 from datetime import datetime
+from typing import Optional, Dict, Any
+from uuid import UUID
 
 from mcp_server.services.supabase_service import supabase_service
 from mcp_server.services.sentiment_analyzer import sentiment_analyzer
 from mcp_server.utils.logger import get_logger
+from mcp_server.utils.metrics import metrics_collector
 
 
 logger = get_logger(__name__)
 
-
-from typing import Optional, Dict, Any
-from uuid import UUID
 
 async def update_grades_job(professor_id: Optional[UUID] = None) -> Dict[str, Any]:
     """
@@ -25,7 +26,7 @@ async def update_grades_job(professor_id: Optional[UUID] = None) -> Dict[str, An
     logger.info(f"STARTING: Professor Grades Update Job (ID: {professor_id or 'All'})")
     logger.info("=" * 60)
     
-    start_time = datetime.now()
+    start_time = time.perf_counter()
     
     try:
         professors_to_update = []
@@ -100,22 +101,44 @@ async def update_grades_job(professor_id: Optional[UUID] = None) -> Dict[str, An
                 logger.error(f"Error updating {professor.name}: {e}")
                 continue
         
-        duration = (datetime.now() - start_time).total_seconds()
+        duration_ms = (time.perf_counter() - start_time) * 1000
+        duration_seconds = duration_ms / 1000
         
         logger.info("=" * 60)
         logger.info("COMPLETED: Professor Grades Update Job")
         logger.info(f"Professors updated: {total_updated}")
-        logger.info(f"Duration: {duration:.2f} seconds")
+        logger.info(f"Duration: {duration_seconds:.2f} seconds")
         logger.info("=" * 60)
+        
+        # Record job execution metrics
+        await metrics_collector.record_job_execution(
+            job_name="update_professor_grades",
+            success=True,
+            duration_ms=duration_ms,
+            details={
+                "professors_updated": total_updated,
+                "total_professors": len(professors_to_update),
+            }
+        )
         
         return {
             'success': True,
             'professors_updated': total_updated,
-            'duration_seconds': duration
+            'duration_seconds': duration_seconds
         }
     
     except Exception as e:
+        duration_ms = (time.perf_counter() - start_time) * 1000
         logger.error(f"Error in grades update job: {e}", exc_info=True)
+        
+        # Record job failure
+        await metrics_collector.record_job_execution(
+            job_name="update_professor_grades",
+            success=False,
+            duration_ms=duration_ms,
+            details={"error": str(e)}
+        )
+        
         return {
             'success': False,
             'error': str(e)

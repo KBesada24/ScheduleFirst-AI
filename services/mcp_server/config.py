@@ -41,6 +41,11 @@ class Settings(BaseSettings):
     # Redis/Cache Configuration (optional)
     redis_url: Optional[str] = Field(default=None, alias="REDIS_URL")
     cache_ttl: int = Field(default=3600, alias="CACHE_TTL")  # 1 hour default
+    cache_max_size: int = Field(default=1000, alias="CACHE_MAX_SIZE")
+    cache_ttl_courses: int = Field(default=86400, alias="CACHE_TTL_COURSES")  # 24 hours
+    cache_ttl_professors: int = Field(default=43200, alias="CACHE_TTL_PROFESSORS")  # 12 hours
+    cache_ttl_reviews: int = Field(default=21600, alias="CACHE_TTL_REVIEWS")  # 6 hours
+    cache_ttl_schedules: int = Field(default=1800, alias="CACHE_TTL_SCHEDULES")  # 30 minutes
     
     # Web Scraping Configuration
     scraper_user_agent: str = Field(
@@ -85,6 +90,8 @@ class Settings(BaseSettings):
     # Logging Configuration
     log_level: str = Field(default="INFO", alias="LOG_LEVEL")
     log_format: str = Field(default="json", alias="LOG_FORMAT")  # json or text
+    log_max_bytes: int = Field(default=10_485_760, alias="LOG_MAX_BYTES")  # 10MB
+    log_backup_count: int = Field(default=5, alias="LOG_BACKUP_COUNT")
     
     # API Configuration
     api_host: str = Field(default="0.0.0.0", alias="API_HOST")

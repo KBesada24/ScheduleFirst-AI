@@ -2,6 +2,12 @@
 
 This document provides comprehensive documentation for all API endpoints, hooks, and utilities in the button routing and integration system.
 
+## Related Documentation
+
+- **Backend REST API**: See [BACKEND_API.md](./BACKEND_API.md) for complete backend endpoint documentation
+- **Architecture**: See [architecture/README.md](./architecture/README.md) for system design
+- **Deployment**: See [DEPLOYMENT.md](./DEPLOYMENT.md) for deployment instructions
+
 ## Table of Contents
 
 1. [Button Components](#button-components)

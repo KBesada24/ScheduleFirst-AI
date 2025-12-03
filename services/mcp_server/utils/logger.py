@@ -1,11 +1,13 @@
 """
-Structured logging configuration for the MCP server
+Structured logging configuration for the MCP server.
+Supports JSON/text formatting, log rotation, and Sentry integration.
 """
 import logging
+import logging.handlers
 import sys
 import json
 from datetime import datetime
-from typing import Any, Dict
+from typing import Any, Dict, Optional
 from pathlib import Path
 
 from ..config import settings
@@ -50,8 +52,41 @@ class TextFormatter(logging.Formatter):
         )
 
 
+def setup_sentry() -> None:
+    """Initialize Sentry for error tracking if configured"""
+    if not settings.sentry_dsn:
+        return
+    
+    try:
+        import sentry_sdk
+        from sentry_sdk.integrations.logging import LoggingIntegration
+        
+        # Configure Sentry to capture error-level logs
+        sentry_logging = LoggingIntegration(
+            level=logging.INFO,        # Capture info and above as breadcrumbs
+            event_level=logging.ERROR  # Send errors as events
+        )
+        
+        sentry_sdk.init(
+            dsn=settings.sentry_dsn,
+            environment=settings.environment,
+            integrations=[sentry_logging],
+            traces_sample_rate=0.1 if settings.is_production else 1.0,
+            profiles_sample_rate=0.1 if settings.is_production else 1.0,
+        )
+        
+        logging.getLogger(__name__).info("Sentry initialized successfully")
+    except ImportError:
+        logging.getLogger(__name__).warning(
+            "Sentry DSN configured but sentry-sdk not installed. "
+            "Install with: pip install sentry-sdk[fastapi]"
+        )
+    except Exception as e:
+        logging.getLogger(__name__).error(f"Failed to initialize Sentry: {e}")
+
+
 def setup_logging() -> None:
-    """Configure logging for the application"""
+    """Configure logging for the application with rotation support"""
     # Determine log level
     log_level = getattr(logging, settings.log_level.upper(), logging.INFO)
     
@@ -78,17 +113,27 @@ def setup_logging() -> None:
     
     root_logger.addHandler(console_handler)
     
-    # File handler for errors
+    # Rotating file handler for errors (10MB per file, keep 5 backups)
     error_file = log_dir / "error.log"
-    error_handler = logging.FileHandler(error_file)
+    error_handler = logging.handlers.RotatingFileHandler(
+        error_file,
+        maxBytes=settings.log_max_bytes,
+        backupCount=settings.log_backup_count,
+        encoding='utf-8'
+    )
     error_handler.setLevel(logging.ERROR)
     error_handler.setFormatter(TextFormatter())
     root_logger.addHandler(error_handler)
     
-    # File handler for all logs
+    # Rotating file handler for all logs (production only)
     if settings.is_production:
         all_file = log_dir / "app.log"
-        file_handler = logging.FileHandler(all_file)
+        file_handler = logging.handlers.RotatingFileHandler(
+            all_file,
+            maxBytes=settings.log_max_bytes,
+            backupCount=settings.log_backup_count,
+            encoding='utf-8'
+        )
         file_handler.setLevel(log_level)
         file_handler.setFormatter(JSONFormatter() if settings.log_format == "json" else TextFormatter())
         root_logger.addHandler(file_handler)
@@ -97,6 +142,9 @@ def setup_logging() -> None:
     logging.getLogger("httpx").setLevel(logging.WARNING)
     logging.getLogger("selenium").setLevel(logging.WARNING)
     logging.getLogger("urllib3").setLevel(logging.WARNING)
+    
+    # Initialize Sentry if configured
+    setup_sentry()
 
 
 def get_logger(name: str) -> logging.Logger:

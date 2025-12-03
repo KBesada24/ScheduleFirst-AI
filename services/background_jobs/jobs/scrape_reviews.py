@@ -1,17 +1,18 @@
 """
 Background job to scrape professor reviews from RateMyProfessors
 """
+import time
 from datetime import datetime
+from typing import Optional, Dict, Any
 
 from mcp_server.services.supabase_service import supabase_service
 from mcp_server.services.ratemyprof_scraper import ratemyprof_scraper
 from mcp_server.utils.logger import get_logger
+from mcp_server.utils.metrics import metrics_collector
 
 
 logger = get_logger(__name__)
 
-
-from typing import Optional, Dict, Any
 
 async def scrape_reviews_job(
     professor_name: Optional[str] = None,
@@ -28,7 +29,7 @@ async def scrape_reviews_job(
     logger.info(f"STARTING: Professor Reviews Scrape Job (Prof: {professor_name or 'All'})")
     logger.info("=" * 60)
     
-    start_time = datetime.now()
+    start_time = time.perf_counter()
     
     try:
         # Determine universities to scrape
@@ -63,6 +64,9 @@ async def scrape_reviews_job(
                             uni
                         )
                         
+                        # Record scraping success
+                        await metrics_collector.record_scraping("ratemyprof", success=True)
+                        
                         if prof_data:
                             # Create new professor
                             from mcp_server.models.professor import ProfessorCreate
@@ -91,6 +95,7 @@ async def scrape_reviews_job(
                             professors = []
                     except Exception as e:
                         logger.error(f"Error scraping/creating professor {professor_name}: {e}")
+                        await metrics_collector.record_scraping("ratemyprof", success=False)
                         professors = []
             else:
                 professors = await supabase_service.get_professors_by_university(uni)
@@ -108,6 +113,9 @@ async def scrape_reviews_job(
                         professor.name,
                         uni
                     )
+                    
+                    # Record scraping success
+                    await metrics_collector.record_scraping("ratemyprof", success=True)
                     
                     if not prof_data:
                         continue
@@ -137,6 +145,7 @@ async def scrape_reviews_job(
                     
                 except Exception as e:
                     logger.error(f"Error scraping {professor.name}: {e}")
+                    await metrics_collector.record_scraping("ratemyprof", success=False)
                     continue
             
             # Update university-level sync status
@@ -144,24 +153,46 @@ async def scrape_reviews_job(
                 "reviews", "all", uni, "success"
             )
         
-        duration = (datetime.now() - start_time).total_seconds()
+        duration_ms = (time.perf_counter() - start_time) * 1000
+        duration_seconds = duration_ms / 1000
         
         logger.info("=" * 60)
         logger.info("COMPLETED: Professor Reviews Scrape Job")
         logger.info(f"Professors scraped: {total_professors}")
         logger.info(f"Reviews collected: {total_reviews}")
-        logger.info(f"Duration: {duration:.2f} seconds")
+        logger.info(f"Duration: {duration_seconds:.2f} seconds")
         logger.info("=" * 60)
+        
+        # Record job execution metrics
+        await metrics_collector.record_job_execution(
+            job_name="scrape_reviews",
+            success=True,
+            duration_ms=duration_ms,
+            details={
+                "professors_scraped": total_professors,
+                "reviews_collected": total_reviews,
+            }
+        )
         
         return {
             'success': True,
             'professors_scraped': total_professors,
             'reviews_collected': total_reviews,
-            'duration_seconds': duration
+            'duration_seconds': duration_seconds
         }
     
     except Exception as e:
+        duration_ms = (time.perf_counter() - start_time) * 1000
         logger.error(f"Error in reviews scrape job: {e}", exc_info=True)
+        
+        # Record job failure
+        await metrics_collector.record_job_execution(
+            job_name="scrape_reviews",
+            success=False,
+            duration_ms=duration_ms,
+            details={"error": str(e)}
+        )
+        
         return {
             'success': False,
             'error': str(e)

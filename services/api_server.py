@@ -2,10 +2,12 @@
 REST API Server for CUNY Schedule Optimizer
 Serves the React frontend with schedule optimization endpoints
 """
-from pydantic import BaseModel
+import time
+from pydantic import BaseModel, Field
 from fastapi import FastAPI, HTTPException, Depends, Request
 from fastapi.responses import JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
+from starlette.middleware.base import BaseHTTPMiddleware
 from contextlib import asynccontextmanager
 from typing import List, Dict, Any, Optional
 import uvicorn
@@ -15,6 +17,8 @@ from mcp_server.services.supabase_service import supabase_service
 from mcp_server.services.constraint_solver import schedule_optimizer
 from mcp_server.services.sentiment_analyzer import sentiment_analyzer
 from mcp_server.utils.logger import get_logger
+from mcp_server.utils.metrics import metrics_collector
+from mcp_server.utils.cache import cache_manager
 from mcp_server.utils.exceptions import (
     ScheduleOptimizerError,
     DataNotFoundError,
@@ -44,6 +48,46 @@ class ScheduleOptimizeRequest(BaseModel):
     constraints: ScheduleConstraints
 
 
+class MetricsMiddleware(BaseHTTPMiddleware):
+    """Middleware to track request metrics"""
+    
+    async def dispatch(self, request: Request, call_next):
+        start_time = time.perf_counter()
+        
+        response = await call_next(request)
+        
+        # Calculate duration
+        duration_ms = (time.perf_counter() - start_time) * 1000
+        
+        # Get endpoint path (normalize to avoid high cardinality)
+        path = request.url.path
+        # Normalize paths with IDs
+        for param in ["professor_name", "name", "id"]:
+            if f"{{{param}}}" not in path and "/" in path:
+                parts = path.split("/")
+                # Simple normalization: replace likely ID segments
+                normalized_parts = []
+                for i, part in enumerate(parts):
+                    if i > 0 and parts[i-1] in ["professor", "course", "section", "schedule"]:
+                        normalized_parts.append(f"{{{parts[i-1]}_id}}")
+                    else:
+                        normalized_parts.append(part)
+                path = "/".join(normalized_parts)
+        
+        # Record metrics
+        await metrics_collector.record_request(
+            endpoint=path,
+            method=request.method,
+            status_code=response.status_code,
+            duration_ms=duration_ms
+        )
+        
+        # Add timing header
+        response.headers["X-Response-Time-Ms"] = f"{duration_ms:.2f}"
+        
+        return response
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Startup and shutdown events"""
@@ -53,6 +97,7 @@ async def lifespan(app: FastAPI):
     logger.info(f"Environment: {settings.environment}")
     logger.info(f"API Host: http://{settings.api_host}:{settings.api_port}")
     logger.info(f"Gemini API: {'✓ Configured' if settings.gemini_api_key else '✗ Not configured'}")
+    logger.info(f"Sentry: {'✓ Configured' if settings.sentry_dsn else '✗ Not configured'}")
     logger.info("=" * 60)
     
     # Health check
@@ -66,15 +111,26 @@ async def lifespan(app: FastAPI):
     except Exception as e:
         logger.error(f"❌ Database error: {e}")
     
+    # Cache warming
+    logger.info("Warming cache...")
+    try:
+        warm_result = await cache_manager.warm_cache()
+        logger.info(f"Cache warming: {warm_result.get('status', 'unknown')}")
+    except Exception as e:
+        logger.warning(f"Cache warming failed: {e}")
+    
     logger.info("=" * 60)
     logger.info("API Server ready!")
     logger.info("Available endpoints:")
     logger.info("  GET  /health")
+    logger.info("  GET  /health/metrics")
+    logger.info("  GET  /health/cache")
     logger.info("  GET  /api/courses")
     logger.info("  POST /api/schedule/optimize")
     logger.info("  GET  /api/professor/{name}")
     logger.info("  POST /api/professor/compare")
     logger.info("  POST /api/admin/sync")
+    logger.info("  POST /api/feedback")
     logger.info("=" * 60)
     
     yield
@@ -194,6 +250,9 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+# Add metrics middleware
+app.add_middleware(MetricsMiddleware)
+
 
 @app.get("/")
 async def root():
@@ -215,12 +274,16 @@ async def health():
         # Get circuit breaker states
         breaker_states = circuit_breaker_registry.get_all_states()
         
+        # Get metrics health summary
+        cache_stats = cache_manager.get_stats()
+        health_summary = await metrics_collector.get_health_summary(cache_stats)
+        
         # Determine overall status
         any_circuit_open = any(state == "open" for state in breaker_states.values())
         
         if not db_healthy:
             status = "unhealthy"
-        elif any_circuit_open:
+        elif any_circuit_open or health_summary.get("status") == "degraded":
             status = "degraded"
         else:
             status = "healthy"
@@ -230,11 +293,69 @@ async def health():
             "database": "connected" if db_healthy else "disconnected",
             "environment": settings.environment,
             "gemini_api": "configured" if settings.gemini_api_key else "not configured",
-            "circuit_breakers": breaker_states
+            "sentry": "configured" if settings.sentry_dsn else "not configured",
+            "circuit_breakers": breaker_states,
+            "metrics_summary": {
+                "uptime_seconds": health_summary.get("uptime_seconds"),
+                "total_requests": health_summary.get("total_requests"),
+                "error_rate": health_summary.get("error_rate"),
+                "avg_response_time_ms": health_summary.get("avg_response_time_ms"),
+                "active_alerts": health_summary.get("active_alerts"),
+            }
         }
     except Exception as e:
         logger.error(f"Health check failed: {e}")
         raise HTTPException(status_code=503, detail="Service unavailable")
+
+
+@app.get("/health/metrics")
+async def health_metrics():
+    """Detailed metrics endpoint for monitoring"""
+    try:
+        cache_stats = cache_manager.get_stats()
+        metrics = await metrics_collector.get_all_metrics(cache_stats)
+        return metrics
+    except Exception as e:
+        logger.error(f"Metrics fetch failed: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/health/cache")
+async def health_cache():
+    """Cache statistics endpoint"""
+    try:
+        stats = cache_manager.get_stats()
+        return {
+            "status": "healthy",
+            "statistics": stats,
+            "config": {
+                "default_ttl": settings.cache_ttl,
+                "max_size": settings.cache_max_size,
+                "ttl_courses": settings.cache_ttl_courses,
+                "ttl_professors": settings.cache_ttl_professors,
+                "ttl_reviews": settings.cache_ttl_reviews,
+                "ttl_schedules": settings.cache_ttl_schedules,
+            }
+        }
+    except Exception as e:
+        logger.error(f"Cache stats fetch failed: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/health/jobs")
+async def health_jobs():
+    """Background job status endpoint"""
+    try:
+        cache_stats = cache_manager.get_stats()
+        metrics = await metrics_collector.get_all_metrics(cache_stats)
+        return {
+            "status": "healthy",
+            "jobs": metrics.get("jobs", {}),
+            "scraping": metrics.get("scraping", {}),
+        }
+    except Exception as e:
+        logger.error(f"Job stats fetch failed: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 @app.get("/api/courses", response_model=ApiResponse)
@@ -631,6 +752,97 @@ async def admin_sync_status(
         raise
     except Exception as e:
         logger.error(f"Error fetching sync status: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/admin/analytics")
+async def admin_analytics():
+    """Get usage analytics for admin dashboard"""
+    try:
+        cache_stats = cache_manager.get_stats()
+        metrics = await metrics_collector.get_all_metrics(cache_stats)
+        
+        return {
+            "usage": metrics.get("usage", {}),
+            "requests": {
+                "total": metrics.get("requests", {}).get("total", 0),
+                "error_rate": metrics.get("requests", {}).get("error_rate", 0),
+            },
+            "cache": {
+                "hit_rate": cache_stats.get("hit_rate", 0),
+                "total_entries": cache_stats.get("total_entries", 0),
+            },
+            "uptime": {
+                "seconds": metrics.get("uptime_seconds", 0),
+                "human": metrics.get("uptime_human", "unknown"),
+            },
+        }
+    except Exception as e:
+        logger.error(f"Error fetching analytics: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/api/admin/cache/clear")
+async def admin_cache_clear():
+    """Clear the application cache"""
+    try:
+        stats_before = cache_manager.get_stats()
+        await cache_manager.clear()
+        stats_after = cache_manager.get_stats()
+        
+        return {
+            "success": True,
+            "cleared_entries": stats_before.get("total_entries", 0),
+            "stats_before": stats_before,
+            "stats_after": stats_after,
+        }
+    except Exception as e:
+        logger.error(f"Error clearing cache: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# ============================================
+# FEEDBACK ENDPOINTS
+# ============================================
+
+class FeedbackRequest(BaseModel):
+    rating: int = Field(..., ge=1, le=5, description="Rating from 1 to 5")
+    category: str = Field(..., description="Feedback category (e.g., 'performance', 'accuracy', 'feature')")
+    message: str = Field(..., max_length=2000, description="Feedback message")
+    page: Optional[str] = Field(None, description="Page where feedback was submitted")
+    user_agent: Optional[str] = Field(None, description="User's browser/device info")
+
+
+@app.post("/api/feedback")
+async def submit_feedback(feedback: FeedbackRequest):
+    """Submit user feedback"""
+    try:
+        # Log feedback for now (could store in database later)
+        logger.info(
+            f"User feedback received",
+            extra={
+                "rating": feedback.rating,
+                "category": feedback.category,
+                "message": feedback.message[:100],  # Truncate for log
+                "page": feedback.page,
+            }
+        )
+        
+        # Track in metrics
+        await metrics_collector.record_request(
+            endpoint="/api/feedback",
+            method="POST",
+            status_code=200,
+            duration_ms=0  # Not a real request timing
+        )
+        
+        return {
+            "success": True,
+            "message": "Thank you for your feedback!",
+            "feedback_id": None,  # Would be DB ID if storing
+        }
+    except Exception as e:
+        logger.error(f"Error submitting feedback: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 
