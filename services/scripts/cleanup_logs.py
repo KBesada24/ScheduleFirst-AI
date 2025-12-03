@@ -112,10 +112,7 @@ def get_log_stats(log_dir: Path) -> dict:
 
 def main():
     parser = argparse.ArgumentParser(description="Log cleanup and archival utility")
-    args = parser.parse_args()
-
-    if args.archive_days >= args.remove_days:
-        parser.error("--archive-days must be less than --remove-days")
+    parser.add_argument(
         "--archive-days", 
         type=int, 
         default=7,
@@ -139,6 +136,10 @@ def main():
     )
     
     args = parser.parse_args()
+    
+    # Validate arguments
+    if args.archive_days >= args.remove_days:
+        parser.error("--archive-days must be less than --remove-days")
     
     log_dir = get_log_dir()
     
