@@ -25,6 +25,7 @@ export interface ChatRequest {
     semester?: string;
     university?: string;
   };
+  history?: ChatMessage[];
 }
 
 export interface ChatResponse {

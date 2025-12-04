@@ -676,6 +676,73 @@ async def validate_schedule_action(request: ScheduleValidationRequest):
         raise HTTPException(status_code=500, detail=str(e))
 
 
+
+def _extract_context_from_history(history: List[Dict[str, Any]]) -> Dict[str, Optional[str]]:
+    """
+    Heuristic to extract university and semester from chat history.
+    This is a fallback when the frontend context is missing.
+    """
+    extracted = {"university": None, "semester": None}
+    
+    # Common CUNY colleges
+    universities = {
+        "baruch": "Baruch College",
+        "csi": "College of Staten Island",
+        "staten island": "College of Staten Island",
+        "hunter": "Hunter College",
+        "city college": "City College",
+        "ccny": "City College",
+        "queens": "Queens College",
+        "brooklyn": "Brooklyn College",
+        "bmcc": "Borough of Manhattan Community College",
+        "laguardia": "LaGuardia Community College"
+    }
+    
+    # Semester patterns
+    import re
+    # Matches: "Fall 2025", "Spring '25", "Summer 2025", "Fall 25"
+    semester_pattern = re.compile(r'\b(fall|spring|summer|winter)\s+(\'?\d{2,4})\b', re.IGNORECASE)
+    
+    print(f"DEBUG: Scanning history for context. {len(history)} messages.")
+    
+    # Scan history in reverse (most recent first)
+    for msg in reversed(history):
+        content = msg.get("content", "").lower()
+        print(f"DEBUG: Scanning message: {content[:50]}...")
+        if not content:
+            continue
+            
+        # Check for university if not found yet
+        if not extracted["university"]:
+            for key, name in universities.items():
+                if key in content:
+                    extracted["university"] = name
+                    print(f"DEBUG: Found university: {name} (key: {key})")
+                    break
+        
+        # Check for semester if not found yet
+        if not extracted["semester"]:
+            match = semester_pattern.search(content)
+            if match:
+                # Capitalize properly: "Fall 2025"
+                term = match.group(1).capitalize()
+                year_raw = match.group(2).replace("'", "")
+                # Normalize year to 4 digits
+                if len(year_raw) == 2:
+                    year = f"20{year_raw}"
+                else:
+                    year = year_raw
+                    
+                extracted["semester"] = f"{term} {year}"
+                print(f"DEBUG: Found semester: {extracted['semester']}")
+                
+        # If both found, stop scanning
+        if extracted["university"] and extracted["semester"]:
+            break
+            
+    return extracted
+
+
 @app.post("/api/chat/message")
 async def chat_with_ai(message: Dict[str, Any]):
     """Chat with AI assistant for schedule recommendations using MCP tools"""
@@ -690,7 +757,12 @@ async def chat_with_ai(message: Dict[str, Any]):
         
         user_message = message.get("message", "")
         context = message.get("context", {})
+        history_raw = message.get("history", [])
         
+        print(f"DEBUG: Received message: {user_message}")
+        print(f"DEBUG: Received context: {context}")
+        print(f"DEBUG: Received history length: {len(history_raw)}")
+
         if not user_message:
             raise HTTPException(status_code=400, detail="Message is required")
         
@@ -800,26 +872,36 @@ async def chat_with_ai(message: Dict[str, Any]):
         
         # Build context for the AI
         current_courses = context.get("currentCourses", [])
-        semester = context.get("semester")  # No default - LLM should ask if missing
-        university = context.get("university")  # No default - LLM should ask if missing
         
-        # Build context strings - only mark as unknown if truly not provided
+        # Try to extract context from history if missing
+        extracted_context = _extract_context_from_history(history_raw)
+        
+        # Determine final university/semester
+        # Priority: 1. Extracted from history (most recent user intent)
+        #           2. App context (if provided)
+        #           3. "Not yet specified"
+        
+        semester = extracted_context["semester"] or context.get("semester")
+        university = extracted_context["university"] or context.get("university")
+        
         university_str = university if university else "Not yet specified"
         semester_str = semester if semester else "Not yet specified"
+        
+        print(f"DEBUG: Final Context - University: {university_str}, Semester: {semester_str}")
         
         system_instruction = f"""You are an AI assistant helping CUNY students plan their class schedules.
 
 You have access to real tools to fetch course data, professor ratings, and generate optimized schedules.
 ALWAYS use these tools to get real data - never make up course times, professor ratings, or schedules.
 
-Current context from app:
+CURRENT CONTEXT:
 - University: {university_str}
 - Semester: {semester_str}
 - Courses in schedule: {', '.join([c.get('name', c.get('code', 'Unknown')) for c in current_courses]) if current_courses else 'None yet'}
 
 IMPORTANT RULES:
-1. If the user mentions their university or semester in their message, USE THAT INFO to call tools - don't ask again.
-2. Only ask for university/semester if the user hasn't mentioned it AND it's not in the context above.
+1. If the University or Semester is set in the CURRENT CONTEXT above, USE IT. Do not ask the user for it again.
+2. Only ask for university/semester if it is "Not yet specified" in the context above.
 3. Use fetch_course_sections to get real course section data with times, professors, and availability.
 4. Use generate_optimized_schedule when the user wants help building a conflict-free schedule.
 5. Use get_professor_grade or compare_professors to help users choose between professors.
@@ -839,8 +921,19 @@ When presenting course sections, include:
             system_instruction=system_instruction
         )
         
+        # Convert history to Gemini format
+        chat_history = []
+        for msg in history_raw:
+            role = "user" if msg.get("role") == "user" else "model"
+            content = msg.get("content", "")
+            if content:
+                chat_history.append({
+                    "role": role,
+                    "parts": [content]
+                })
+
         # Start chat and get initial response
-        chat = model.start_chat()
+        chat = model.start_chat(history=chat_history)
         response = chat.send_message(user_message)
         
         # Handle function calling loop (max 6 tool calls)
@@ -851,7 +944,7 @@ When presenting course sections, include:
             # Check if there are function calls to process
             function_calls = [
                 part for part in response.candidates[0].content.parts 
-                if hasattr(part, 'function_call') and part.function_call.name
+                if hasattr(part, 'function_call') and part.function_call and part.function_call.name
             ]
             
             if not function_calls:

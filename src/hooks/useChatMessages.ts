@@ -57,10 +57,17 @@ export function useChatMessages(initialMessages: Message[] = []) {
       addUserMessage(content);
 
       try {
+        // Prepare history (excluding the message just added, which is handled by the 'message' field)
+        const history = messages.map(msg => ({
+          role: msg.role,
+          content: msg.content
+        }));
+
         // Send to backend API
         const response = await sendChatMessage({
           message: content,
           context,
+          history,
         });
 
         // Add AI response
@@ -75,7 +82,7 @@ export function useChatMessages(initialMessages: Message[] = []) {
         setIsProcessing(false);
       }
     },
-    [addUserMessage, addAIMessage]
+    [addUserMessage, addAIMessage, messages]
   );
 
   /**
