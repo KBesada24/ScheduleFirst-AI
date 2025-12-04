@@ -23,6 +23,7 @@ export interface ChatRequest {
     currentSchedule?: any;
     preferences?: any;
     semester?: string;
+    university?: string;
   };
 }
 
