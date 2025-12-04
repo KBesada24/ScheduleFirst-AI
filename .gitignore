@@ -34,3 +34,10 @@ core
 .env
 .env.local
 services/.env
+
+# Python test artifacts
+.coverage
+*.coverage
+.pytest_cache/
+htmlcov/
+.hypothesis/
