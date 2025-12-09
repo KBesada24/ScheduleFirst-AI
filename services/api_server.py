@@ -682,9 +682,12 @@ def _extract_context_from_history(history: List[Dict[str, Any]]) -> Dict[str, Op
     Heuristic to extract university and semester from chat history.
     This is a fallback when the frontend context is missing.
     """
+    import re
+    from datetime import datetime
+    
     extracted = {"university": None, "semester": None}
     
-    # Common CUNY colleges
+    # Common CUNY colleges - expanded list
     universities = {
         "baruch": "Baruch College",
         "csi": "College of Staten Island",
@@ -695,20 +698,52 @@ def _extract_context_from_history(history: List[Dict[str, Any]]) -> Dict[str, Op
         "queens": "Queens College",
         "brooklyn": "Brooklyn College",
         "bmcc": "Borough of Manhattan Community College",
-        "laguardia": "LaGuardia Community College"
+        "laguardia": "LaGuardia Community College",
+        "lehman": "Lehman College",
+        "medgar evers": "Medgar Evers College",
+        "york": "York College",
+        "john jay": "John Jay College",
+        "hostos": "Hostos Community College",
+        "kingsborough": "Kingsborough Community College",
+        "queensborough": "Queensborough Community College",
+        "bronx community": "Bronx Community College",
+        "cuny grad center": "CUNY Graduate Center",
+        "guttman": "Guttman Community College",
     }
     
     # Semester patterns
-    import re
     # Matches: "Fall 2025", "Spring '25", "Summer 2025", "Fall 25"
     semester_pattern = re.compile(r'\b(fall|spring|summer|winter)\s+(\'?\d{2,4})\b', re.IGNORECASE)
+    # Matches: "next fall", "this spring", "upcoming summer"
+    relative_semester_pattern = re.compile(r'\b(next|this|upcoming|current)\s+(fall|spring|summer|winter)\b', re.IGNORECASE)
     
-    print(f"DEBUG: Scanning history for context. {len(history)} messages.")
+    # Calculate current/next semester for relative references
+    current_year = datetime.now().year
+    current_month = datetime.now().month
+    
+    def resolve_relative_semester(modifier: str, term: str) -> str:
+        """Resolve 'next fall' or 'this spring' to actual semester"""
+        term = term.capitalize()
+        
+        # Determine which year based on current date and term
+        term_months = {"Spring": 1, "Summer": 6, "Fall": 9, "Winter": 12}
+        term_month = term_months.get(term, 1)
+        
+        if modifier.lower() in ("next", "upcoming"):
+            # Next occurrence of this term
+            if current_month < term_month:
+                return f"{term} {current_year}"
+            else:
+                return f"{term} {current_year + 1}"
+        else:  # "this" or "current"
+            return f"{term} {current_year}"
+    
+    logger.debug(f"Scanning history for context. {len(history)} messages.")
     
     # Scan history in reverse (most recent first)
     for msg in reversed(history):
         content = msg.get("content", "").lower()
-        print(f"DEBUG: Scanning message: {content[:50]}...")
+        logger.debug(f"Scanning message: {content[:50]}...")
         if not content:
             continue
             
@@ -717,14 +752,14 @@ def _extract_context_from_history(history: List[Dict[str, Any]]) -> Dict[str, Op
             for key, name in universities.items():
                 if key in content:
                     extracted["university"] = name
-                    print(f"DEBUG: Found university: {name} (key: {key})")
+                    logger.debug(f"Found university: {name} (key: {key})")
                     break
         
         # Check for semester if not found yet
         if not extracted["semester"]:
+            # Try explicit semester first (Fall 2025, Spring '25)
             match = semester_pattern.search(content)
             if match:
-                # Capitalize properly: "Fall 2025"
                 term = match.group(1).capitalize()
                 year_raw = match.group(2).replace("'", "")
                 # Normalize year to 4 digits
@@ -734,7 +769,15 @@ def _extract_context_from_history(history: List[Dict[str, Any]]) -> Dict[str, Op
                     year = year_raw
                     
                 extracted["semester"] = f"{term} {year}"
-                print(f"DEBUG: Found semester: {extracted['semester']}")
+                logger.debug(f"Found semester: {extracted['semester']}")
+            else:
+                # Try relative semester (next fall, this spring)
+                relative_match = relative_semester_pattern.search(content)
+                if relative_match:
+                    modifier = relative_match.group(1)
+                    term = relative_match.group(2)
+                    extracted["semester"] = resolve_relative_semester(modifier, term)
+                    logger.debug(f"Found relative semester: {extracted['semester']}")
                 
         # If both found, stop scanning
         if extracted["university"] and extracted["semester"]:
@@ -759,9 +802,9 @@ async def chat_with_ai(message: Dict[str, Any]):
         context = message.get("context", {})
         history_raw = message.get("history", [])
         
-        print(f"DEBUG: Received message: {user_message}")
-        print(f"DEBUG: Received context: {context}")
-        print(f"DEBUG: Received history length: {len(history_raw)}")
+        logger.debug(f"Received chat message: {user_message[:100]}...")
+        logger.debug(f"Received context: {context}")
+        logger.debug(f"Received history length: {len(history_raw)}")
 
         if not user_message:
             raise HTTPException(status_code=400, detail="Message is required")
@@ -769,33 +812,73 @@ async def chat_with_ai(message: Dict[str, Any]):
         # Configure Gemini API with function calling
         genai.configure(api_key=settings.gemini_api_key)  # type: ignore[attr-defined]
         
-        # Define tool functions for Gemini using proper protos format
+        # ============================================
+        # STEP 1: EXTRACT CONTEXT FIRST (before tool declarations!)
+        # ============================================
+        current_courses = context.get("currentCourses", [])
+        
+        # Extract context from BOTH current message AND history
+        current_msg_context = _extract_context_from_history([{"role": "user", "content": user_message}])
+        history_context = _extract_context_from_history(history_raw)
+        
+        # Priority: current message > history > frontend context
+        university = (
+            current_msg_context["university"] or 
+            history_context["university"] or 
+            context.get("university")
+        )
+        semester = (
+            current_msg_context["semester"] or 
+            history_context["semester"] or 
+            context.get("semester")
+        )
+        
+        university_str = university if university else "Not yet specified"
+        semester_str = semester if semester else "Not yet specified"
+        
+        logger.info(f"Context extraction: current_msg={current_msg_context}, history={history_context}, frontend={context.get('university')}/{context.get('semester')}")
+        logger.info(f"Final context: university={university_str}, semester={semester_str}")
+        
+        # ============================================
+        # STEP 2: BUILD TOOL DECLARATIONS WITH CONTEXT EMBEDDED
+        # Key fix: semester/university are OPTIONAL with defaults embedded in descriptions
+        # ============================================
+        
+        # Dynamic descriptions that include context defaults
+        semester_desc = f"Semester (optional - defaults to '{semester_str}' if not specified)"
+        university_desc = f"University (optional - defaults to '{university_str}' if not specified)"
+        
         fetch_course_sections_decl = genai.protos.FunctionDeclaration(  # type: ignore[attr-defined]
             name="fetch_course_sections",
-            description="Fetch available course sections from the database. Uses hybrid approach: checks DB first, auto-populates via scraping if data is stale or missing.",
+            description=f"""Fetch available course sections from the database.
+NOTE: User is at {university_str} looking for {semester_str} courses.
+If semester/university not explicitly provided, use these defaults.""",
             parameters=genai.protos.Schema(  # type: ignore[attr-defined]
                 type=genai.protos.Type.OBJECT,  # type: ignore[attr-defined]
                 properties={
-                    "course_code": genai.protos.Schema(  # type: ignore[attr-defined]
-                        type=genai.protos.Type.STRING,  # type: ignore[attr-defined]
-                        description="Course code like 'CSC 126' or 'MTH 231'"
+                    "course_codes": genai.protos.Schema(  # type: ignore[attr-defined]
+                        type=genai.protos.Type.ARRAY,  # type: ignore[attr-defined]
+                        items=genai.protos.Schema(type=genai.protos.Type.STRING),  # type: ignore[attr-defined]
+                        description="List of course codes like ['CSC 126'] or ['MTH 231', 'CSC 446']"
                     ),
                     "semester": genai.protos.Schema(  # type: ignore[attr-defined]
                         type=genai.protos.Type.STRING,  # type: ignore[attr-defined]
-                        description="Semester like 'Spring 2025' or 'Fall 2025'"
+                        description=semester_desc
                     ),
                     "university": genai.protos.Schema(  # type: ignore[attr-defined]
                         type=genai.protos.Type.STRING,  # type: ignore[attr-defined]
-                        description="University name like 'CSI College' or 'Baruch College'"
+                        description=university_desc
                     ),
                 },
-                required=["course_code", "semester", "university"]
+                required=["course_codes"]  # course_codes is required
             )
         )
         
         generate_schedule_decl = genai.protos.FunctionDeclaration(  # type: ignore[attr-defined]
             name="generate_optimized_schedule",
-            description="Generate an optimized schedule from a list of desired courses. Considers time conflicts, professor ratings, and preferences.",
+            description=f"""Generate an optimized schedule from a list of desired courses.
+NOTE: User is at {university_str} for {semester_str}.
+If semester/university not explicitly provided, use these defaults.""",
             parameters=genai.protos.Schema(  # type: ignore[attr-defined]
                 type=genai.protos.Type.OBJECT,  # type: ignore[attr-defined]
                 properties={
@@ -806,20 +889,21 @@ async def chat_with_ai(message: Dict[str, Any]):
                     ),
                     "semester": genai.protos.Schema(  # type: ignore[attr-defined]
                         type=genai.protos.Type.STRING,  # type: ignore[attr-defined]
-                        description="Semester like 'Spring 2025'"
+                        description=semester_desc
                     ),
                     "university": genai.protos.Schema(  # type: ignore[attr-defined]
                         type=genai.protos.Type.STRING,  # type: ignore[attr-defined]
-                        description="University name"
+                        description=university_desc
                     ),
                 },
-                required=["course_codes", "semester", "university"]
+                required=["course_codes"]  # ONLY course_codes is required now!
             )
         )
         
         get_professor_grade_decl = genai.protos.FunctionDeclaration(  # type: ignore[attr-defined]
             name="get_professor_grade",
-            description="Get RateMyProfessor rating and grade distribution for a professor.",
+            description=f"""Get RateMyProfessor rating and grade distribution for a professor.
+NOTE: User is at {university_str}. Use this as the default university.""",
             parameters=genai.protos.Schema(  # type: ignore[attr-defined]
                 type=genai.protos.Type.OBJECT,  # type: ignore[attr-defined]
                 properties={
@@ -829,16 +913,17 @@ async def chat_with_ai(message: Dict[str, Any]):
                     ),
                     "university": genai.protos.Schema(  # type: ignore[attr-defined]
                         type=genai.protos.Type.STRING,  # type: ignore[attr-defined]
-                        description="University name"
+                        description=university_desc
                     ),
                 },
-                required=["professor_name", "university"]
+                required=["professor_name"]  # ONLY professor_name is required now!
             )
         )
         
         compare_professors_decl = genai.protos.FunctionDeclaration(  # type: ignore[attr-defined]
             name="compare_professors",
-            description="Compare multiple professors teaching the same course based on ratings and reviews.",
+            description=f"""Compare multiple professors teaching the same course.
+NOTE: User is at {university_str}. Use this as the default university.""",
             parameters=genai.protos.Schema(  # type: ignore[attr-defined]
                 type=genai.protos.Type.OBJECT,  # type: ignore[attr-defined]
                 properties={
@@ -849,14 +934,14 @@ async def chat_with_ai(message: Dict[str, Any]):
                     ),
                     "university": genai.protos.Schema(  # type: ignore[attr-defined]
                         type=genai.protos.Type.STRING,  # type: ignore[attr-defined]
-                        description="University name"
+                        description=university_desc
                     ),
                     "course_code": genai.protos.Schema(  # type: ignore[attr-defined]
                         type=genai.protos.Type.STRING,  # type: ignore[attr-defined]
                         description="Optional course code for context"
                     ),
                 },
-                required=["professor_names", "university"]
+                required=["professor_names"]  # ONLY professor_names is required now!
             )
         )
         
@@ -870,53 +955,37 @@ async def chat_with_ai(message: Dict[str, Any]):
             ]
         )
         
-        # Build context for the AI
-        current_courses = context.get("currentCourses", [])
-        
-        # Try to extract context from history if missing
-        extracted_context = _extract_context_from_history(history_raw)
-        
-        # Determine final university/semester
-        # Priority: 1. Extracted from history (most recent user intent)
-        #           2. App context (if provided)
-        #           3. "Not yet specified"
-        
-        semester = extracted_context["semester"] or context.get("semester")
-        university = extracted_context["university"] or context.get("university")
-        
-        university_str = university if university else "Not yet specified"
-        semester_str = semester if semester else "Not yet specified"
-        
-        print(f"DEBUG: Final Context - University: {university_str}, Semester: {semester_str}")
-        
+        # ============================================
+        # STEP 3: BUILD SYSTEM INSTRUCTION
+        # ============================================
         system_instruction = f"""You are an AI assistant helping CUNY students plan their class schedules.
 
 You have access to real tools to fetch course data, professor ratings, and generate optimized schedules.
 ALWAYS use these tools to get real data - never make up course times, professor ratings, or schedules.
 
-CURRENT CONTEXT:
-- University: {university_str}
-- Semester: {semester_str}
-- Courses in schedule: {', '.join([c.get('name', c.get('code', 'Unknown')) for c in current_courses]) if current_courses else 'None yet'}
+=== CURRENT USER CONTEXT ===
+University: {university_str}
+Semester: {semester_str}
+Courses in schedule: {', '.join([c.get('name', c.get('code', 'Unknown')) for c in current_courses]) if current_courses else 'None yet'}
+=== END CONTEXT ===
 
-IMPORTANT RULES:
-1. If the University or Semester is set in the CURRENT CONTEXT above, USE IT. Do not ask the user for it again.
-2. Only ask for university/semester if it is "Not yet specified" in the context above.
-3. Use fetch_course_sections to get real course section data with times, professors, and availability.
-4. Use generate_optimized_schedule when the user wants help building a conflict-free schedule.
-5. Use get_professor_grade or compare_professors to help users choose between professors.
-6. Provide specific, actionable information based on real data from the tools.
+CRITICAL RULES - YOU MUST FOLLOW THESE:
+1. The user's university is "{university_str}". The semester is "{semester_str}".
+2. If university is NOT "Not yet specified", DO NOT ask "What university are you attending?" - you already know it!
+3. If semester is NOT "Not yet specified", DO NOT ask "Which semester?" - you already know it!
+4. When calling tools like fetch_course_sections, ALWAYS use university="{university_str}" and semester="{semester_str}".
+5. Only ask for university OR semester if that specific field shows "Not yet specified" above.
 
-When presenting course sections, include:
-- Section number
-- Days and times
-- Professor name
-- Location (if available)
-- Seats available (if available)"""
+TOOL USAGE:
+- Use fetch_course_sections to get real course section data with times, professors, and availability.
+- Use generate_optimized_schedule when the user wants help building a conflict-free schedule.
+- Use get_professor_grade or compare_professors to help users choose between professors.
+
+When presenting course sections, include: section number, days/times, professor name, location, and seats available."""
 
         # Create model with tools
         model = genai.GenerativeModel(  # type: ignore[attr-defined]
-            'gemini-2.0-flash',
+            'gemini-2.5-flash',
             tools=[tools],
             system_instruction=system_instruction
         )
@@ -965,33 +1034,122 @@ When presenting course sections, include:
                     # Get function arguments
                     args = dict(fc.args) if fc.args else {}
                     
-                    # Execute the appropriate MCP tool
+                    # Merge in context defaults for missing arguments
+                    effective_semester = args.get("semester") or semester or ""
+                    effective_university = args.get("university") or university or ""
+                    
+                    # Execute the appropriate MCP tool with validation
                     if fc.name == "fetch_course_sections":
-                        result = await fetch_course_sections.fn(
-                            course_code=args.get("course_code", ""),
-                            semester=args.get("semester", semester or ""),
-                            university=args.get("university", university or "")
-                        )
+                        # Handle both singular course_code and plural course_codes
+                        course_codes = args.get("course_codes", [])
+                        if not course_codes:
+                            # Try singular for backwards compatibility
+                            single_code = args.get("course_code", "")
+                            if single_code:
+                                course_codes = [single_code]
+                        
+                        if not course_codes:
+                            result = {
+                                "success": False,
+                                "error": "Course code(s) required",
+                                "error_code": "VALIDATION_ERROR",
+                                "suggestions": ["Please specify a course code like 'CSC 126' or 'MTH 231'"]
+                            }
+                        elif not effective_semester:
+                            result = {
+                                "success": False,
+                                "error": "Semester is required",
+                                "error_code": "VALIDATION_ERROR",
+                                "suggestions": ["Please specify a semester like 'Fall 2025' or 'Spring 2025'"]
+                            }
+                        elif not effective_university:
+                            result = {
+                                "success": False,
+                                "error": "University is required",
+                                "error_code": "VALIDATION_ERROR",
+                                "suggestions": ["Please specify your school like 'Baruch College' or 'Hunter College'"]
+                            }
+                        else:
+                            result = await fetch_course_sections.fn(
+                                course_codes=course_codes,
+                                semester=effective_semester,
+                                university=effective_university
+                            )
                     elif fc.name == "generate_optimized_schedule":
-                        result = await generate_optimized_schedule.fn(
-                            course_codes=args.get("course_codes", []),
-                            semester=args.get("semester", semester or ""),
-                            university=args.get("university", university or ""),
-                            preferences=args.get("preferences")
-                        )
+                        course_codes = args.get("course_codes", [])
+                        if not course_codes:
+                            result = {
+                                "success": False,
+                                "error": "Course codes are required",
+                                "error_code": "VALIDATION_ERROR",
+                                "suggestions": ["Please specify the courses you want to schedule"]
+                            }
+                        elif not effective_semester:
+                            result = {
+                                "success": False,
+                                "error": "Semester is required",
+                                "error_code": "VALIDATION_ERROR",
+                                "suggestions": ["Please specify a semester like 'Fall 2025'"]
+                            }
+                        elif not effective_university:
+                            result = {
+                                "success": False,
+                                "error": "University is required",
+                                "error_code": "VALIDATION_ERROR",
+                                "suggestions": ["Please specify your school"]
+                            }
+                        else:
+                            result = await generate_optimized_schedule.fn(
+                                course_codes=course_codes,
+                                semester=effective_semester,
+                                university=effective_university,
+                                preferences=args.get("preferences")
+                            )
                     elif fc.name == "get_professor_grade":
-                        result = await get_professor_grade.fn(
-                            professor_name=args.get("professor_name", ""),
-                            university=args.get("university", university or "")
-                        )
+                        professor_name = args.get("professor_name", "")
+                        if not professor_name:
+                            result = {
+                                "success": False,
+                                "error": "Professor name is required",
+                                "error_code": "VALIDATION_ERROR",
+                                "suggestions": ["Please specify the professor's name"]
+                            }
+                        elif not effective_university:
+                            result = {
+                                "success": False,
+                                "error": "University is required",
+                                "error_code": "VALIDATION_ERROR",
+                                "suggestions": ["Please specify your school"]
+                            }
+                        else:
+                            result = await get_professor_grade.fn(
+                                professor_name=professor_name,
+                                university=effective_university
+                            )
                     elif fc.name == "compare_professors":
-                        result = await compare_professors_tool.fn(
-                            professor_names=args.get("professor_names", []),
-                            university=args.get("university", university or ""),
-                            course_code=args.get("course_code")
-                        )
+                        professor_names = args.get("professor_names", [])
+                        if not professor_names or len(professor_names) < 2:
+                            result = {
+                                "success": False,
+                                "error": "At least two professor names are required for comparison",
+                                "error_code": "VALIDATION_ERROR",
+                                "suggestions": ["Please specify at least two professors to compare"]
+                            }
+                        elif not effective_university:
+                            result = {
+                                "success": False,
+                                "error": "University is required",
+                                "error_code": "VALIDATION_ERROR",
+                                "suggestions": ["Please specify your school"]
+                            }
+                        else:
+                            result = await compare_professors_tool.fn(
+                                professor_names=professor_names,
+                                university=effective_university,
+                                course_code=args.get("course_code")
+                            )
                     else:
-                        result = {"error": f"Unknown function: {fc.name}"}
+                        result = {"error": f"Unknown function: {fc.name}", "error_code": "UNKNOWN_FUNCTION"}
                     
                     logger.info(f"Tool {fc.name} result: {str(result)[:200]}...")
                     
@@ -1021,10 +1179,17 @@ When presenting course sections, include:
         if not final_text:
             final_text = "I encountered an issue processing your request. Please try again."
         
+        # Return merged context so frontend can update its state with inferred values
+        merged_context = {
+            **context,
+            "university": university if university else context.get("university"),
+            "semester": semester if semester else context.get("semester"),
+        }
+        
         return {
             "message": final_text,
             "suggestions": [],
-            "context": context,
+            "context": merged_context,
             "tool_calls_made": tool_call_count
         }
         
