@@ -676,27 +676,41 @@ async def validate_schedule_action(request: ScheduleValidationRequest):
         raise HTTPException(status_code=500, detail=str(e))
 
 
-def get_next_semester() -> str:
+def get_next_semester(current_date: Optional[datetime] = None) -> str:
     """
     Calculate the next semester students are likely registering for.
     Based on CUNY registration cycles.
     
+    Registration periods:
+    - Oct-Dec: Registering for Spring (next year)
+    - Jan-May: Registering for Fall (same year) - Spring is already in session
+    - Jun-Sep: Registering for Fall (same year)
+    
+    Args:
+        current_date: Optional date to use (defaults to now in Eastern Time, useful for testing)
+    
     Returns:
         Semester string like "Spring 2025" or "Fall 2025"
     """
-    from datetime import datetime
+    from zoneinfo import ZoneInfo
     
-    now = datetime.now()
+    # Use Eastern Time for CUNY students
+    if current_date:
+        now = current_date
+    else:
+        now = datetime.now(ZoneInfo("America/New_York"))
+    
     month = now.month
     year = now.year
     
-    # Oct-Jan: Students registering for Spring
-    if month >= 10 or month == 1:
-        spring_year = year + 1 if month >= 10 else year
-        return f"Spring {spring_year}"
+    # Oct-Dec: Students registering for Spring (next year)
+    if month >= 10:
+        return f"Spring {year + 1}"
     
-    # Feb-Sep: Students registering for Fall
+    # Jan-Sep: Students registering for Fall (same year)
+    # In January, Spring semester has started, so next registration is Fall
     return f"Fall {year}"
+
 
 
 def _extract_context_from_history(history: List[Dict[str, Any]]) -> Dict[str, Optional[str]]:
