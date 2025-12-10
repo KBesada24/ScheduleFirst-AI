@@ -676,6 +676,28 @@ async def validate_schedule_action(request: ScheduleValidationRequest):
         raise HTTPException(status_code=500, detail=str(e))
 
 
+def get_next_semester() -> str:
+    """
+    Calculate the next semester students are likely registering for.
+    Based on CUNY registration cycles.
+    
+    Returns:
+        Semester string like "Spring 2025" or "Fall 2025"
+    """
+    from datetime import datetime
+    
+    now = datetime.now()
+    month = now.month
+    year = now.year
+    
+    # Oct-Jan: Students registering for Spring
+    if month >= 10 or month == 1:
+        spring_year = year + 1 if month >= 10 else year
+        return f"Spring {spring_year}"
+    
+    # Feb-Sep: Students registering for Fall
+    return f"Fall {year}"
+
 
 def _extract_context_from_history(history: List[Dict[str, Any]]) -> Dict[str, Optional[str]]:
     """
@@ -821,38 +843,45 @@ async def chat_with_ai(message: Dict[str, Any]):
         current_msg_context = _extract_context_from_history([{"role": "user", "content": user_message}])
         history_context = _extract_context_from_history(history_raw)
         
-        # Priority: current message > history > frontend context
+        # Calculate default semester based on current date
+        default_semester = get_next_semester()
+        
+        # Priority for university: current message > history > frontend context
         university = (
             current_msg_context["university"] or 
             history_context["university"] or 
             context.get("university")
         )
+        
+        # Priority for semester: 
+        # 1. Frontend persisted (user told us before)
+        # 2. Current message override
+        # 3. Chat history
+        # 4. Auto-calculated default (always have a valid semester)
         semester = (
-            current_msg_context["semester"] or 
-            history_context["semester"] or 
-            context.get("semester")
+            context.get("semester") or              # Persisted from previous conversation
+            current_msg_context["semester"] or      # Current message override
+            history_context["semester"] or          # From chat history
+            default_semester                        # Auto-calculated fallback
         )
         
         university_str = university if university else "Not yet specified"
-        semester_str = semester if semester else "Not yet specified"
+        semester_str = semester  # Will always be set now (never "Not yet specified")
         
-        logger.info(f"Context extraction: current_msg={current_msg_context}, history={history_context}, frontend={context.get('university')}/{context.get('semester')}")
-        logger.info(f"Final context: university={university_str}, semester={semester_str}")
+        logger.info(f"Context: university={university_str}, semester={semester_str} (default={default_semester})")
         
         # ============================================
         # STEP 2: BUILD TOOL DECLARATIONS WITH CONTEXT EMBEDDED
-        # Key fix: semester/university are OPTIONAL with defaults embedded in descriptions
         # ============================================
         
-        # Dynamic descriptions that include context defaults
-        semester_desc = f"Semester (optional - defaults to '{semester_str}' if not specified)"
+        # Dynamic descriptions with auto-calculated defaults
         university_desc = f"University (optional - defaults to '{university_str}' if not specified)"
+        semester_desc = f"Semester (optional - defaults to '{semester_str}' for current registration)"
         
         fetch_course_sections_decl = genai.protos.FunctionDeclaration(  # type: ignore[attr-defined]
             name="fetch_course_sections",
             description=f"""Fetch available course sections from the database.
-NOTE: User is at {university_str} looking for {semester_str} courses.
-If semester/university not explicitly provided, use these defaults.""",
+Default semester: {semester_str}. Default university: {university_str}.""",
             parameters=genai.protos.Schema(  # type: ignore[attr-defined]
                 type=genai.protos.Type.OBJECT,  # type: ignore[attr-defined]
                 properties={
@@ -870,15 +899,14 @@ If semester/university not explicitly provided, use these defaults.""",
                         description=university_desc
                     ),
                 },
-                required=["course_codes"]  # course_codes is required
+                required=["course_codes"]
             )
         )
         
         generate_schedule_decl = genai.protos.FunctionDeclaration(  # type: ignore[attr-defined]
             name="generate_optimized_schedule",
             description=f"""Generate an optimized schedule from a list of desired courses.
-NOTE: User is at {university_str} for {semester_str}.
-If semester/university not explicitly provided, use these defaults.""",
+Default semester: {semester_str}. Default university: {university_str}.""",
             parameters=genai.protos.Schema(  # type: ignore[attr-defined]
                 type=genai.protos.Type.OBJECT,  # type: ignore[attr-defined]
                 properties={
@@ -896,7 +924,7 @@ If semester/university not explicitly provided, use these defaults.""",
                         description=university_desc
                     ),
                 },
-                required=["course_codes"]  # ONLY course_codes is required now!
+                required=["course_codes"]
             )
         )
         
@@ -969,12 +997,12 @@ Semester: {semester_str}
 Courses in schedule: {', '.join([c.get('name', c.get('code', 'Unknown')) for c in current_courses]) if current_courses else 'None yet'}
 === END CONTEXT ===
 
-CRITICAL RULES - YOU MUST FOLLOW THESE:
-1. The user's university is "{university_str}". The semester is "{semester_str}".
-2. If university is NOT "Not yet specified", DO NOT ask "What university are you attending?" - you already know it!
-3. If semester is NOT "Not yet specified", DO NOT ask "Which semester?" - you already know it!
-4. When calling tools like fetch_course_sections, ALWAYS use university="{university_str}" and semester="{semester_str}".
-5. Only ask for university OR semester if that specific field shows "Not yet specified" above.
+CRITICAL RULES:
+1. The default semester is "{semester_str}" and university is "{university_str}".
+2. If university is NOT "Not yet specified", DO NOT ask for it - you already know it!
+3. When calling tools, use semester="{semester_str}" and university="{university_str}" unless user specified different.
+4. If user mentions a different semester (e.g., "Fall 2026"), use that instead.
+5. Only ask for university if it shows "Not yet specified" above.
 
 TOOL USAGE:
 - Use fetch_course_sections to get real course section data with times, professors, and availability.

@@ -79,6 +79,21 @@ export default function ScheduleBuilder() {
     scrollToBottom();
   }, [chatMessages]);
 
+  // Chat context from localStorage for persistence across messages
+  const [chatContext, setChatContext] = useState<{semester?: string; university?: string}>(() => {
+    if (typeof window !== 'undefined') {
+      const saved = localStorage.getItem('scheduleFirstChatContext');
+      if (saved) {
+        try {
+          return JSON.parse(saved);
+        } catch {
+          return {};
+        }
+      }
+    }
+    return {};
+  });
+
   const handleSendMessage = async () => {
     if (!chatInput.trim()) return;
 
@@ -94,20 +109,43 @@ export default function ScheduleBuilder() {
     setIsAiThinking(true);
 
     try {
-      // Use ChatButton's API call
+      // Build history from existing messages (excluding the one we just added)
+      const history = chatMessages.map(msg => ({
+        role: msg.role,
+        content: msg.content
+      }));
+
+      // Merge context: persisted > profile
+      const currentContext = {
+        university: chatContext.university || profile?.university,
+        semester: chatContext.semester, // Will use auto-calculated default if not set
+        currentSchedule: sections.length > 0 ? {
+          sections: sections,
+          count: sections.length,
+        } : undefined,
+      };
+
+      console.log('[ScheduleBuilder] Sending with context:', currentContext, 'history length:', history.length);
+
       const response = await sendChatMessage({
         message: chatInput,
-        context: {
-          currentSchedule: sections.length > 0 ? {
-            sections: sections,
-            count: sections.length,
-          } : undefined,
-          semester: "Fall 2025",
-          preferences: {
-            // Add any user preferences here
-          },
-        },
+        context: currentContext,
+        history,
       });
+
+      // Persist context from response for future messages
+      const responseContext = (response as any).context;
+      if (responseContext) {
+        const newContext = {
+          semester: responseContext.semester || chatContext.semester,
+          university: responseContext.university || chatContext.university || profile?.university,
+        };
+        if (newContext.semester || newContext.university) {
+          localStorage.setItem('scheduleFirstChatContext', JSON.stringify(newContext));
+          setChatContext(newContext);
+          console.log('[ScheduleBuilder] Persisted context:', newContext);
+        }
+      }
 
       const assistantMessage: Message = {
         id: (Date.now() + 1).toString(),
@@ -121,9 +159,7 @@ export default function ScheduleBuilder() {
 
       // Handle suggestions if any
       if (response.suggestedSchedule) {
-        // Display suggestion UI
         console.log('AI suggested schedule:', response.suggestedSchedule);
-        // Update the calendar grid with AI-suggested schedule
         await updateFromAI(response.suggestedSchedule);
       }
     } catch (error) {
