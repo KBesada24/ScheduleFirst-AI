@@ -72,7 +72,6 @@ sys.modules['mcp_server.tools.schedule_optimizer'] = MagicMock()
 # Patch environment variables if needed
 os.environ['SUPABASE_URL'] = 'https://example.supabase.co'
 os.environ['SUPABASE_KEY'] = 'example-key'
-os.environ['GEMINI_API_KEY'] = 'example-key'
 
 # Import chat_with_ai
 from api_server import chat_with_ai
@@ -88,31 +87,33 @@ async def test_chat_with_ai_history():
         ]
     }
 
-    # Mock genai
-    with patch('google.generativeai.GenerativeModel') as MockModel, \
-         patch('google.generativeai.configure'), \
-         patch('google.generativeai.protos'):
+    # Mock Ollama Client
+    with patch('api_server.OllamaClient') as MockOllamaClient:
+        mock_client = MagicMock()
+        MockOllamaClient.return_value = mock_client
         
-        mock_chat = MagicMock()
+        # Build mock response (no tool calls, just text)
         mock_response = MagicMock()
-        mock_candidate = MagicMock()
-        mock_part = MagicMock()
-        mock_part.text = "Here are courses"
-        # Ensure function_call is not set or empty
-        mock_part.function_call = None
+        mock_response.message.content = "Here are courses"
+        mock_response.message.tool_calls = None
         
-        mock_candidate.content.parts = [mock_part]
-        mock_response.candidates = [mock_candidate]
-        
-        mock_chat.send_message.return_value = mock_response
-        MockModel.return_value.start_chat.return_value = mock_chat
+        mock_client.chat.return_value = mock_response
 
         # Call function
         await chat_with_ai(message)
 
-        # Verify start_chat called with history
-        expected_history = [
-            {"role": "user", "parts": ["I am at Baruch"]},
-            {"role": "model", "parts": ["Hello Baruch student"]}
-        ]
-        MockModel.return_value.start_chat.assert_called_with(history=expected_history)
+        # Verify ollama_client.chat was called
+        mock_client.chat.assert_called_once()
+        call_kwargs = mock_client.chat.call_args
+        messages = call_kwargs.kwargs.get('messages') or call_kwargs[1].get('messages')
+        
+        # Verify history is in the messages list
+        # Messages should be: [system, user:"I am at Baruch", assistant:"Hello Baruch student", user:"What courses?"]
+        history_messages = [m for m in messages if m.get('role') in ('user', 'assistant') and isinstance(m, dict)]
+        
+        # Check that the history user message is present
+        assert any(m.get('content') == "I am at Baruch" and m.get('role') == 'user' for m in history_messages)
+        # Check that the history assistant message is present
+        assert any(m.get('content') == "Hello Baruch student" and m.get('role') == 'assistant' for m in history_messages)
+        # Check that the current user message is the last one
+        assert messages[-1] == {'role': 'user', 'content': 'What courses?'}

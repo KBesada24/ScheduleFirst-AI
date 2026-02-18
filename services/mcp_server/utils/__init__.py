@@ -22,7 +22,7 @@ from .circuit_breaker import (
     ratemyprof_breaker,
     cuny_scraper_breaker,
     supabase_breaker,
-    gemini_breaker,
+    ollama_breaker,
 )
 
 __all__ = [
@@ -49,5 +49,5 @@ __all__ = [
     "ratemyprof_breaker",
     "cuny_scraper_breaker",
     "supabase_breaker",
-    "gemini_breaker",
+    "ollama_breaker",
 ]

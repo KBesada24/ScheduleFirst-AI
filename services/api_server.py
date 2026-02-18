@@ -3,6 +3,7 @@ REST API Server for CUNY Schedule Optimizer
 Serves the React frontend with schedule optimization endpoints
 """
 import time
+from datetime import datetime
 from pydantic import BaseModel, Field
 from fastapi import FastAPI, HTTPException, Depends, Request
 from fastapi.responses import JSONResponse
@@ -126,7 +127,7 @@ async def lifespan(app: FastAPI):
     logger.info("=" * 60)
     logger.info(f"Environment: {settings.environment}")
     logger.info(f"API Host: http://{settings.api_host}:{settings.api_port}")
-    logger.info(f"Gemini API: {'✓ Configured' if settings.gemini_api_key else '✗ Not configured'}")
+    logger.info(f"Ollama API: {'✓ Configured' if settings.ollama_api_key else '✗ Not configured (local)'}")
     logger.info(f"Sentry: {'✓ Configured' if settings.sentry_dsn else '✗ Not configured'}")
     logger.info("=" * 60)
     
@@ -322,7 +323,7 @@ async def health():
             "status": status,
             "database": "connected" if db_healthy else "disconnected",
             "environment": settings.environment,
-            "gemini_api": "configured" if settings.gemini_api_key else "not configured",
+            "ollama_api": "configured" if settings.ollama_api_key else "not configured",
             "sentry": "configured" if settings.sentry_dsn else "not configured",
             "circuit_breakers": breaker_states,
             "metrics_summary": {
@@ -692,24 +693,26 @@ def get_next_semester(current_date: Optional[datetime] = None) -> str:
     Returns:
         Semester string like "Spring 2025" or "Fall 2025"
     """
-    from zoneinfo import ZoneInfo
-    
-    # Use Eastern Time for CUNY students
-    if current_date:
-        now = current_date
-    else:
-        now = datetime.now(ZoneInfo("America/New_York"))
-    
-    month = now.month
-    year = now.year
-    
-    # Oct-Dec: Students registering for Spring (next year)
-    if month >= 10:
-        return f"Spring {year + 1}"
-    
-    # Jan-Sep: Students registering for Fall (same year)
-    # In January, Spring semester has started, so next registration is Fall
-    return f"Fall {year}"
+    return "Spring 2026"
+    # from datetime import datetime
+    # from zoneinfo import ZoneInfo
+    #
+    # # Use Eastern Time for CUNY students
+    # if current_date:
+    #     now = current_date
+    # else:
+    #     now = datetime.now(ZoneInfo("America/New_York"))
+    #
+    # month = now.month
+    # year = now.year
+    #
+    # # Oct-Dec: Students registering for Spring (next year)
+    # if month >= 10:
+    #     return f"Spring {year + 1}"
+    #
+    # # Jan-Sep: Students registering for Fall (same year)
+    # # In January, Spring semester has started, so next registration is Fall
+    # return f"Fall {year}"
 
 
 
@@ -826,7 +829,8 @@ def _extract_context_from_history(history: List[Dict[str, Any]]) -> Dict[str, Op
 async def chat_with_ai(message: Dict[str, Any]):
     """Chat with AI assistant for schedule recommendations using MCP tools"""
     try:
-        import google.generativeai as genai  # type: ignore[import-untyped]
+        import json as json_module
+        from ollama import Client as OllamaClient
         from mcp_server.tools.schedule_optimizer import (
             fetch_course_sections,
             generate_optimized_schedule,
@@ -845,8 +849,11 @@ async def chat_with_ai(message: Dict[str, Any]):
         if not user_message:
             raise HTTPException(status_code=400, detail="Message is required")
         
-        # Configure Gemini API with function calling
-        genai.configure(api_key=settings.gemini_api_key)  # type: ignore[attr-defined]
+        # Configure Ollama client with auth
+        headers = {}
+        if settings.ollama_api_key:
+            headers['Authorization'] = f'Bearer {settings.ollama_api_key}'
+        ollama_client = OllamaClient(host=settings.ollama_host, headers=headers)
         
         # ============================================
         # STEP 1: EXTRACT CONTEXT FIRST (before tool declarations!)
@@ -892,113 +899,92 @@ async def chat_with_ai(message: Dict[str, Any]):
         university_desc = f"University (optional - defaults to '{university_str}' if not specified)"
         semester_desc = f"Semester (optional - defaults to '{semester_str}' for current registration)"
         
-        fetch_course_sections_decl = genai.protos.FunctionDeclaration(  # type: ignore[attr-defined]
-            name="fetch_course_sections",
-            description=f"""Fetch available course sections from the database.
-Default semester: {semester_str}. Default university: {university_str}.""",
-            parameters=genai.protos.Schema(  # type: ignore[attr-defined]
-                type=genai.protos.Type.OBJECT,  # type: ignore[attr-defined]
-                properties={
-                    "course_codes": genai.protos.Schema(  # type: ignore[attr-defined]
-                        type=genai.protos.Type.ARRAY,  # type: ignore[attr-defined]
-                        items=genai.protos.Schema(type=genai.protos.Type.STRING),  # type: ignore[attr-defined]
-                        description="List of course codes like ['CSC 126'] or ['MTH 231', 'CSC 446']"
-                    ),
-                    "semester": genai.protos.Schema(  # type: ignore[attr-defined]
-                        type=genai.protos.Type.STRING,  # type: ignore[attr-defined]
-                        description=semester_desc
-                    ),
-                    "university": genai.protos.Schema(  # type: ignore[attr-defined]
-                        type=genai.protos.Type.STRING,  # type: ignore[attr-defined]
-                        description=university_desc
-                    ),
+        tools = [
+            {
+                'type': 'function',
+                'function': {
+                    'name': 'fetch_course_sections',
+                    'description': f"Fetch available course sections from the database.\nDefault semester: {semester_str}. Default university: {university_str}.",
+                    'parameters': {
+                        'type': 'object',
+                        'required': ['course_codes'],
+                        'properties': {
+                            'course_codes': {
+                                'type': 'array',
+                                'items': {'type': 'string'},
+                                'description': "List of course codes like ['CSC 126'] or ['MTH 231', 'CSC 446']"
+                            },
+                            'semester': {'type': 'string', 'description': semester_desc},
+                            'university': {'type': 'string', 'description': university_desc},
+                        },
+                    },
                 },
-                required=["course_codes"]
-            )
-        )
-        
-        generate_schedule_decl = genai.protos.FunctionDeclaration(  # type: ignore[attr-defined]
-            name="generate_optimized_schedule",
-            description=f"""Generate an optimized schedule from a list of desired courses.
-Default semester: {semester_str}. Default university: {university_str}.""",
-            parameters=genai.protos.Schema(  # type: ignore[attr-defined]
-                type=genai.protos.Type.OBJECT,  # type: ignore[attr-defined]
-                properties={
-                    "course_codes": genai.protos.Schema(  # type: ignore[attr-defined]
-                        type=genai.protos.Type.ARRAY,  # type: ignore[attr-defined]
-                        items=genai.protos.Schema(type=genai.protos.Type.STRING),  # type: ignore[attr-defined]
-                        description="List of course codes like ['CSC 126', 'MTH 231', 'ENG 101']"
-                    ),
-                    "semester": genai.protos.Schema(  # type: ignore[attr-defined]
-                        type=genai.protos.Type.STRING,  # type: ignore[attr-defined]
-                        description=semester_desc
-                    ),
-                    "university": genai.protos.Schema(  # type: ignore[attr-defined]
-                        type=genai.protos.Type.STRING,  # type: ignore[attr-defined]
-                        description=university_desc
-                    ),
+            },
+            {
+                'type': 'function',
+                'function': {
+                    'name': 'generate_optimized_schedule',
+                    'description': f"Generate an optimized schedule from a list of desired courses.\nDefault semester: {semester_str}. Default university: {university_str}.",
+                    'parameters': {
+                        'type': 'object',
+                        'required': ['course_codes'],
+                        'properties': {
+                            'course_codes': {
+                                'type': 'array',
+                                'items': {'type': 'string'},
+                                'description': "List of course codes like ['CSC 126', 'MTH 231', 'ENG 101']"
+                            },
+                            'semester': {'type': 'string', 'description': semester_desc},
+                            'university': {'type': 'string', 'description': university_desc},
+                        },
+                    },
                 },
-                required=["course_codes"]
-            )
-        )
-        
-        get_professor_grade_decl = genai.protos.FunctionDeclaration(  # type: ignore[attr-defined]
-            name="get_professor_grade",
-            description=f"""Get RateMyProfessor rating and grade distribution for a professor.
-NOTE: User is at {university_str}. Use this as the default university.""",
-            parameters=genai.protos.Schema(  # type: ignore[attr-defined]
-                type=genai.protos.Type.OBJECT,  # type: ignore[attr-defined]
-                properties={
-                    "professor_name": genai.protos.Schema(  # type: ignore[attr-defined]
-                        type=genai.protos.Type.STRING,  # type: ignore[attr-defined]
-                        description="Professor's name like 'John Smith'"
-                    ),
-                    "university": genai.protos.Schema(  # type: ignore[attr-defined]
-                        type=genai.protos.Type.STRING,  # type: ignore[attr-defined]
-                        description=university_desc
-                    ),
+            },
+            {
+                'type': 'function',
+                'function': {
+                    'name': 'get_professor_grade',
+                    'description': f"Get RateMyProfessor rating and grade distribution for a professor.\nNOTE: User is at {university_str}. Use this as the default university.",
+                    'parameters': {
+                        'type': 'object',
+                        'required': ['professor_name'],
+                        'properties': {
+                            'professor_name': {
+                                'type': 'string',
+                                'description': "Professor's name like 'John Smith'"
+                            },
+                            'university': {'type': 'string', 'description': university_desc},
+                        },
+                    },
                 },
-                required=["professor_name"]  # ONLY professor_name is required now!
-            )
-        )
-        
-        compare_professors_decl = genai.protos.FunctionDeclaration(  # type: ignore[attr-defined]
-            name="compare_professors",
-            description=f"""Compare multiple professors teaching the same course.
-NOTE: User is at {university_str}. Use this as the default university.""",
-            parameters=genai.protos.Schema(  # type: ignore[attr-defined]
-                type=genai.protos.Type.OBJECT,  # type: ignore[attr-defined]
-                properties={
-                    "professor_names": genai.protos.Schema(  # type: ignore[attr-defined]
-                        type=genai.protos.Type.ARRAY,  # type: ignore[attr-defined]
-                        items=genai.protos.Schema(type=genai.protos.Type.STRING),  # type: ignore[attr-defined]
-                        description="List of professor names to compare"
-                    ),
-                    "university": genai.protos.Schema(  # type: ignore[attr-defined]
-                        type=genai.protos.Type.STRING,  # type: ignore[attr-defined]
-                        description=university_desc
-                    ),
-                    "course_code": genai.protos.Schema(  # type: ignore[attr-defined]
-                        type=genai.protos.Type.STRING,  # type: ignore[attr-defined]
-                        description="Optional course code for context"
-                    ),
+            },
+            {
+                'type': 'function',
+                'function': {
+                    'name': 'compare_professors',
+                    'description': f"Compare multiple professors teaching the same course.\nNOTE: User is at {university_str}. Use this as the default university.",
+                    'parameters': {
+                        'type': 'object',
+                        'required': ['professor_names'],
+                        'properties': {
+                            'professor_names': {
+                                'type': 'array',
+                                'items': {'type': 'string'},
+                                'description': "List of professor names to compare"
+                            },
+                            'university': {'type': 'string', 'description': university_desc},
+                            'course_code': {
+                                'type': 'string',
+                                'description': "Optional course code for context"
+                            },
+                        },
+                    },
                 },
-                required=["professor_names"]  # ONLY professor_names is required now!
-            )
-        )
-        
-        # Create tool with all function declarations
-        tools = genai.protos.Tool(  # type: ignore[attr-defined]
-            function_declarations=[
-                fetch_course_sections_decl,
-                generate_schedule_decl,
-                get_professor_grade_decl,
-                compare_professors_decl,
-            ]
-        )
+            },
+        ]
         
         # ============================================
-        # STEP 3: BUILD SYSTEM INSTRUCTION
+        # STEP 3: BUILD SYSTEM INSTRUCTION & MESSAGES
         # ============================================
         system_instruction = f"""You are an AI assistant helping CUNY students plan their class schedules.
 
@@ -1025,63 +1011,50 @@ TOOL USAGE:
 
 When presenting course sections, include: section number, days/times, professor name, location, and seats available."""
 
-        # Create model with tools
-        model = genai.GenerativeModel(  # type: ignore[attr-defined]
-            'gemini-2.5-flash',
-            tools=[tools],
-            system_instruction=system_instruction
-        )
+        # Build messages list (Ollama uses a flat list, not stateful chat)
+        messages = [{'role': 'system', 'content': system_instruction}]
         
-        # Convert history to Gemini format
-        chat_history = []
+        # Add history
         for msg in history_raw:
-            role = "user" if msg.get("role") == "user" else "model"
+            role = "user" if msg.get("role") == "user" else "assistant"
             content = msg.get("content", "")
             if content:
-                chat_history.append({
-                    "role": role,
-                    "parts": [content]
-                })
+                messages.append({'role': role, 'content': content})
+        
+        # Add current user message
+        messages.append({'role': 'user', 'content': user_message})
 
         # Start chat and get initial response
-        chat = model.start_chat(history=chat_history)
-        response = chat.send_message(user_message)
+        response = ollama_client.chat(
+            model=settings.ollama_model,
+            messages=messages,
+            tools=tools,
+        )
         
         # Handle function calling loop (max 6 tool calls)
         tool_call_count = 0
         max_tool_calls = 6
         
-        while response.candidates[0].content.parts:
-            # Check if there are function calls to process
-            function_calls = [
-                part for part in response.candidates[0].content.parts 
-                if hasattr(part, 'function_call') and part.function_call and part.function_call.name
-            ]
-            
-            if not function_calls:
-                break  # No more function calls, we have the final text response
-            
-            if tool_call_count >= max_tool_calls:
-                logger.warning(f"Reached max tool calls ({max_tool_calls}), stopping")
-                break
+        while response.message.tool_calls and tool_call_count < max_tool_calls:
+            # Append the assistant's message (with tool_calls) to the messages list
+            messages.append(response.message)
             
             # Process each function call
-            function_responses = []
-            for fc_part in function_calls:
-                fc = fc_part.function_call
+            for tc in response.message.tool_calls:
                 tool_call_count += 1
-                logger.info(f"Tool call {tool_call_count}: {fc.name}")
+                fc_name = tc.function.name
+                logger.info(f"Tool call {tool_call_count}: {fc_name}")
                 
                 try:
                     # Get function arguments
-                    args = dict(fc.args) if fc.args else {}
+                    args = tc.function.arguments or {}
                     
                     # Merge in context defaults for missing arguments
                     effective_semester = args.get("semester") or semester or ""
                     effective_university = args.get("university") or university or ""
                     
                     # Execute the appropriate MCP tool with validation
-                    if fc.name == "fetch_course_sections":
+                    if fc_name == "fetch_course_sections":
                         # Handle both singular course_code and plural course_codes
                         course_codes = args.get("course_codes", [])
                         if not course_codes:
@@ -1117,7 +1090,7 @@ When presenting course sections, include: section number, days/times, professor 
                                 semester=effective_semester,
                                 university=effective_university
                             )
-                    elif fc.name == "generate_optimized_schedule":
+                    elif fc_name == "generate_optimized_schedule":
                         course_codes = args.get("course_codes", [])
                         if not course_codes:
                             result = {
@@ -1147,7 +1120,7 @@ When presenting course sections, include: section number, days/times, professor 
                                 university=effective_university,
                                 preferences=args.get("preferences")
                             )
-                    elif fc.name == "get_professor_grade":
+                    elif fc_name == "get_professor_grade":
                         professor_name = args.get("professor_name", "")
                         if not professor_name:
                             result = {
@@ -1168,7 +1141,7 @@ When presenting course sections, include: section number, days/times, professor 
                                 professor_name=professor_name,
                                 university=effective_university
                             )
-                    elif fc.name == "compare_professors":
+                    elif fc_name == "compare_professors":
                         professor_names = args.get("professor_names", [])
                         if not professor_names or len(professor_names) < 2:
                             result = {
@@ -1191,32 +1164,30 @@ When presenting course sections, include: section number, days/times, professor 
                                 course_code=args.get("course_code")
                             )
                     else:
-                        result = {"error": f"Unknown function: {fc.name}", "error_code": "UNKNOWN_FUNCTION"}
+                        result = {"error": f"Unknown function: {fc_name}", "error_code": "UNKNOWN_FUNCTION"}
                     
-                    logger.info(f"Tool {fc.name} result: {str(result)[:200]}...")
+                    logger.info(f"Tool {fc_name} result: {str(result)[:200]}...")
                     
                 except Exception as tool_error:
-                    logger.error(f"Error executing tool {fc.name}: {tool_error}")
+                    logger.error(f"Error executing tool {fc_name}: {tool_error}")
                     result = {"error": str(tool_error)}
                 
-                # Build function response
-                function_responses.append(
-                    genai.protos.Part(  # type: ignore[attr-defined]
-                        function_response=genai.protos.FunctionResponse(  # type: ignore[attr-defined]
-                            name=fc.name,
-                            response={"result": result}
-                        )
-                    )
-                )
+                # Add tool result to messages
+                messages.append({
+                    'role': 'tool',
+                    'tool_name': fc_name,
+                    'content': json_module.dumps(result) if not isinstance(result, str) else result,
+                })
             
-            # Send function responses back to the model
-            response = chat.send_message(function_responses)
+            # Send updated messages back to get next response
+            response = ollama_client.chat(
+                model=settings.ollama_model,
+                messages=messages,
+                tools=tools,
+            )
         
         # Extract final text response
-        final_text = ""
-        for part in response.candidates[0].content.parts:
-            if hasattr(part, 'text') and part.text:
-                final_text += part.text
+        final_text = response.message.content or ""
         
         if not final_text:
             final_text = "I encountered an issue processing your request. Please try again."

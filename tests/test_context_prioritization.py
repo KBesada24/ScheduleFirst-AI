@@ -73,11 +73,11 @@ from api_server import chat_with_ai
 
 @pytest.mark.asyncio
 async def test_context_prioritization():
-    # Mock message with history containing the university
+    """Test that university extracted from chat history overrides None in app context"""
     message = {
         "message": "I need CSC 446",
         "context": {
-            "university": None, # Simulating "Not yet specified" in app context
+            "university": None,  # Simulating "Not yet specified" in app context
             "semester": None
         },
         "history": [
@@ -86,39 +86,36 @@ async def test_context_prioritization():
         ]
     }
 
-    # Mock genai
-    with patch('google.generativeai.GenerativeModel') as MockModel, \
-         patch('google.generativeai.configure'), \
-         patch('google.generativeai.protos'):
+    # Mock Ollama Client
+    with patch('api_server.OllamaClient') as MockOllamaClient:
+        mock_client = MagicMock()
+        MockOllamaClient.return_value = mock_client
         
-        mock_chat = MagicMock()
+        # Build mock response (no tool calls, just text)
         mock_response = MagicMock()
-        mock_candidate = MagicMock()
-        mock_part = MagicMock()
+        mock_response.message.content = "Let me look up CSC 446 for you."
+        mock_response.message.tool_calls = None
         
-        # Simulate LLM calling the tool with the correct university from history
-        mock_part.function_call.name = "fetch_course_sections"
-        mock_part.function_call.args = {
-            "course_code": "CSC 446",
-            "university": "College of Staten Island",
-            "semester": "Spring 2025" # Assuming LLM infers or asks, but checking university is key
-        }
-        
-        mock_candidate.content.parts = [mock_part]
-        mock_response.candidates = [mock_candidate]
-        
-        mock_chat.send_message.return_value = mock_response
-        MockModel.return_value.start_chat.return_value = mock_chat
+        mock_client.chat.return_value = mock_response
 
-        # We need to mock the tool execution to avoid errors
-        with patch('mcp_server.tools.schedule_optimizer.fetch_course_sections.fn') as mock_fetch:
-            mock_fetch.return_value = {"sections": []}
-            
-            # Call function
-            await chat_with_ai(message)
+        # Call function
+        result = await chat_with_ai(message)
 
-        # Verify that the system instruction contains the prioritization rule
-        call_args = MockModel.call_args
-        system_instruction = call_args.kwargs['system_instruction']
-        assert "PRIORITIZE CHAT HISTORY" in system_instruction
-        assert "Initial App Context" in system_instruction
+        # Verify that the system message contains the university from history
+        call_kwargs = mock_client.chat.call_args
+        messages = call_kwargs.kwargs.get('messages') or call_kwargs[1].get('messages')
+        
+        system_msg = messages[0]
+        assert system_msg['role'] == 'system'
+        system_content = system_msg['content']
+        
+        # University should be extracted from history ("College of Staten Island")
+        # since app context university is None
+        assert "University: College of Staten Island" in system_content
+        
+        # The system instruction should contain the critical rules about context usage
+        assert "CURRENT USER CONTEXT" in system_content
+        assert "CRITICAL RULES" in system_content
+        
+        # Verify the merged context in the response includes the extracted university
+        assert result["context"]["university"] == "College of Staten Island"

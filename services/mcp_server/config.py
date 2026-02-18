@@ -25,8 +25,10 @@ class Settings(BaseSettings):
             return v.lower() in ('true', '1', 'yes', 'on')
         return bool(v)
     
-    # API Keys
-    gemini_api_key: str = Field(..., alias="GEMINI_API_KEY")
+    # Ollama Configuration
+    ollama_host: str = Field(default="https://ollama.com", alias="OLLAMA_HOST")
+    ollama_model: str = Field(default="gemini-3-flash-preview", alias="OLLAMA_MODEL")
+    ollama_api_key: Optional[str] = Field(default=None, alias="OLLAMA_API_KEY")
     
     # Supabase Configuration
     supabase_url: str = Field(..., alias="SUPABASE_URL")
@@ -109,7 +111,12 @@ class Settings(BaseSettings):
     admin_api_key: Optional[str] = Field(default=None, alias="ADMIN_API_KEY")
     
     model_config = SettingsConfigDict(
-        env_file=Path(__file__).parent.parent.parent / ".env",  # Points to root .env
+        env_file=(
+            Path(__file__).parent.parent.parent / ".env",        # Root .env
+            Path(__file__).parent.parent.parent / ".env.local",  # Root .env.local
+            Path(__file__).parent.parent / ".env",               # services/.env
+            Path(__file__).parent.parent / ".env.local",         # services/.env.local
+        ),
         env_file_encoding="utf-8",
         case_sensitive=False,
         extra="ignore"
@@ -140,7 +147,8 @@ def get_settings() -> Settings:
             raise RuntimeError(
                 f"Failed to load settings. Please ensure your .env file exists in the project root "
                 f"and contains all required environment variables:\n"
-                f"GEMINI_API_KEY, SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, SUPABASE_ANON_KEY\n"
+                f"SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, SUPABASE_ANON_KEY\n"
+                f"Optional: OLLAMA_HOST, OLLAMA_MODEL, OLLAMA_API_KEY\n"
                 f"Error: {e}"
             )
     return _settings

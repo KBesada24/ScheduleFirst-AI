@@ -107,8 +107,8 @@ class HealthResponse(BaseModel):
         ..., description="Database connection status"
     )
     environment: str = Field(..., description="Current environment (development/production)")
-    gemini_api: Literal["configured", "not configured"] = Field(
-        ..., description="Gemini API configuration status"
+    ollama_api: Literal["configured", "not configured"] = Field(
+        ..., description="Ollama API configuration status"
     )
     cache: Optional[Dict[str, Any]] = Field(
         default=None, description="Cache statistics if available"

@@ -1,10 +1,10 @@
 """
 Sentiment analysis service for professor reviews
-Uses Google Gemini API for aspect-based sentiment analysis
+Uses Ollama API for aspect-based sentiment analysis
 """
 from typing import List, Dict, Optional, Any, Union
 import json
-import google.generativeai as genai
+from ollama import Client as OllamaClient
 
 from ..config import settings
 from ..utils.logger import get_logger
@@ -14,16 +14,19 @@ logger = get_logger(__name__)
 
 
 class SentimentAnalyzer:
-    """Analyze sentiment in professor reviews using Gemini AI"""
+    """Analyze sentiment in professor reviews using Ollama AI"""
     
     def __init__(self):
-        genai.configure(api_key=settings.gemini_api_key)
-        self.model = genai.GenerativeModel('gemini-2.5-flash')
-        logger.info("Sentiment analyzer initialized with Gemini API")
+        headers = {}
+        if settings.ollama_api_key:
+            headers['Authorization'] = f'Bearer {settings.ollama_api_key}'
+        self.client = OllamaClient(host=settings.ollama_host, headers=headers)
+        self.model = settings.ollama_model
+        logger.info("Sentiment analyzer initialized with Ollama API")
     
     def analyze_review(self, review_text: str) -> Dict[str, Union[str, float]]:
         """
-        Analyze a single review for sentiment using Gemini
+        Analyze a single review for sentiment using Ollama
         Returns scores for different aspects
         """
         if not review_text:
@@ -55,17 +58,13 @@ Rules:
 - accessibility: How available/helpful is the professor
 - class_difficulty: How challenging is the class (higher = harder)"""
 
-            response = self.model.generate_content(prompt)
+            response = self.client.chat(
+                model=self.model,
+                messages=[{'role': 'user', 'content': prompt}],
+                format='json',
+            )
             
-            # Parse JSON from response
-            result_text = response.text.strip()
-            # Remove markdown code blocks if present
-            if result_text.startswith('```'):
-                result_text = result_text.split('```')[1]
-                if result_text.startswith('json'):
-                    result_text = result_text[4:]
-                result_text = result_text.strip()
-            
+            result_text = response.message.content.strip()
             result = json.loads(result_text)
             
             # Normalize scores to 0-1 range
@@ -82,7 +81,7 @@ Rules:
             return normalized
         
         except Exception as e:
-            logger.error(f"Error analyzing review with Gemini: {e}")
+            logger.error(f"Error analyzing review with Ollama: {e}")
             # Fallback to neutral scores
             return {
                 'overall_sentiment': 'NEUTRAL',
@@ -96,7 +95,7 @@ Rules:
     
     def analyze_reviews_batch(self, reviews: List[str], batch_size: int = 5) -> List[Dict[str, Union[str, float]]]:
         """
-        Analyze multiple reviews in batch using Gemini
+        Analyze multiple reviews in batch using Ollama
         Processes in batches to avoid rate limits
         """
         if not reviews:
@@ -112,35 +111,34 @@ Rules:
                 # Create a batch prompt
                 reviews_text = "\n\n".join([f"Review {j+1}: {r}" for j, r in enumerate(batch)])
                 
-                prompt = f"""Analyze these {len(batch)} professor reviews and return ONLY a JSON array with sentiment scores:
+                prompt = f"""Analyze these {len(batch)} professor reviews and return ONLY a JSON object with a "reviews" key containing an array of sentiment scores:
 
 {reviews_text}
 
 Return this exact format:
-[
-    {{
-        "overall_sentiment": "POSITIVE/NEGATIVE/NEUTRAL",
-        "overall_score": 0-100,
-        "teaching_clarity": 0-100,
-        "grading_fairness": 0-100,
-        "engagement": 0-100,
-        "accessibility": 0-100,
-        "class_difficulty": 0-100
-    }},
-    ... (one object per review)
-]"""
+{{
+    "reviews": [
+        {{
+            "overall_sentiment": "POSITIVE/NEGATIVE/NEUTRAL",
+            "overall_score": 0-100,
+            "teaching_clarity": 0-100,
+            "grading_fairness": 0-100,
+            "engagement": 0-100,
+            "accessibility": 0-100,
+            "class_difficulty": 0-100
+        }}
+    ]
+}}"""
 
-                response = self.model.generate_content(prompt)
+                response = self.client.chat(
+                    model=self.model,
+                    messages=[{'role': 'user', 'content': prompt}],
+                    format='json',
+                )
                 
-                # Parse JSON array
-                result_text = response.text.strip()
-                if result_text.startswith('```'):
-                    result_text = result_text.split('```')[1]
-                    if result_text.startswith('json'):
-                        result_text = result_text[4:]
-                    result_text = result_text.strip()
-                
-                batch_results = json.loads(result_text)
+                result_text = response.message.content.strip()
+                parsed = json.loads(result_text)
+                batch_results = parsed.get('reviews', [parsed] if isinstance(parsed, dict) else parsed)
                 
                 # Normalize scores
                 for result in batch_results:

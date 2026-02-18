@@ -336,8 +336,8 @@ supabase_breaker = circuit_breaker_registry.register(
     half_open_max_calls=3
 )
 
-gemini_breaker = circuit_breaker_registry.register(
-    "gemini",
+ollama_breaker = circuit_breaker_registry.register(
+    "ollama",
     failure_threshold=5,
     recovery_timeout=120,
     half_open_max_calls=2
@@ -352,5 +352,5 @@ __all__ = [
     "ratemyprof_breaker",
     "cuny_scraper_breaker",
     "supabase_breaker",
-    "gemini_breaker",
+    "ollama_breaker",
 ]

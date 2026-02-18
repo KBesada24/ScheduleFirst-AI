@@ -581,12 +581,12 @@ class TestGlobalCircuitBreakers:
         assert supabase_breaker is not None
         assert supabase_breaker.name == "supabase"
     
-    def test_gemini_breaker_exists(self):
-        """Global Gemini breaker should be configured"""
-        from mcp_server.utils.circuit_breaker import gemini_breaker
+    def test_ollama_breaker_exists(self):
+        """Global Ollama breaker should be configured"""
+        from mcp_server.utils.circuit_breaker import ollama_breaker
         
-        assert gemini_breaker is not None
-        assert gemini_breaker.name == "gemini"
+        assert ollama_breaker is not None
+        assert ollama_breaker.name == "ollama"
     
     def test_global_registry_contains_all_breakers(self):
         """Global registry should contain all pre-configured breakers"""
@@ -597,4 +597,4 @@ class TestGlobalCircuitBreakers:
         assert "ratemyprof" in all_states
         assert "cuny_scraper" in all_states
         assert "supabase" in all_states
-        assert "gemini" in all_states
+        assert "ollama" in all_states
