@@ -55,7 +55,7 @@ export default function ScheduleBuilder() {
   const { courses, loading: coursesLoading } = useCourseSearch({
     query: searchQuery,
     department: filters.department !== "all" ? filters.department : undefined,
-    semester: "Current Semester",
+    semester: "Spring 2026",
     university: profile?.university || undefined,
     limit: 20,
   });
@@ -80,7 +80,7 @@ export default function ScheduleBuilder() {
   }, [chatMessages]);
 
   // Chat context from localStorage for persistence across messages
-  const [chatContext, setChatContext] = useState<{semester?: string; university?: string}>(() => {
+  const [chatContext, setChatContext] = useState<{ semester?: string; university?: string }>(() => {
     if (typeof window !== 'undefined') {
       const saved = localStorage.getItem('scheduleFirstChatContext');
       if (saved) {
@@ -263,7 +263,7 @@ export default function ScheduleBuilder() {
               <div className="flex gap-2">
                 <OptimizeButton
                   courseCodes={sections.map(s => s.course_id)} // Using course_id as proxy for code for now
-                  semester="Fall 2025"
+                  semester="Spring 2026"
                   university="Baruch College"
                   onOptimized={(response: ScheduleOptimizationResponse) => {
                     console.log("Optimization complete:", response);

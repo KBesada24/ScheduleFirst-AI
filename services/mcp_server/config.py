@@ -25,9 +25,13 @@ class Settings(BaseSettings):
             return v.lower() in ('true', '1', 'yes', 'on')
         return bool(v)
     
-    # Ollama Configuration
+    # Gemini Configuration
+    gemini_model: str = Field(default="gemini-3-flash-preview", alias="GEMINI_MODEL")
+    gemini_api_key: Optional[str] = Field(default=None, alias="GEMINI_API_KEY")
+    
+    # Ollama Configuration (Deprecated)
     ollama_host: str = Field(default="https://ollama.com", alias="OLLAMA_HOST")
-    ollama_model: str = Field(default="gemini-3-flash-preview", alias="OLLAMA_MODEL")
+    ollama_model: str = Field(default="qwen3-coder-next:cloud", alias="OLLAMA_MODEL")
     ollama_api_key: Optional[str] = Field(default=None, alias="OLLAMA_API_KEY")
     
     # Supabase Configuration
@@ -62,6 +66,15 @@ class Settings(BaseSettings):
         default="https://globalsearch.cuny.edu/",
         alias="CUNY_GLOBAL_SEARCH_URL"
     )
+    cuny_browser_use_enabled: bool = Field(default=False, alias="CUNY_BROWSER_USE_ENABLED")
+    cuny_selenium_fallback_enabled: bool = Field(default=True, alias="CUNY_SELENIUM_FALLBACK_ENABLED")
+    cuny_shadow_mode: bool = Field(default=False, alias="CUNY_SHADOW_MODE")
+    cuny_browser_use_timeout: int = Field(default=45, alias="CUNY_BROWSER_USE_TIMEOUT")
+    cuny_browser_use_max_retries: int = Field(default=1, alias="CUNY_BROWSER_USE_MAX_RETRIES")
+    browser_use_api_key: Optional[str] = Field(default=None, alias="BROWSER_USE_API_KEY")
+    cuny_browser_use_poll_interval: int = Field(default=2, alias="CUNY_BROWSER_USE_POLL_INTERVAL")
+    cuny_browser_use_max_steps: int = Field(default=140, alias="CUNY_BROWSER_USE_MAX_STEPS")
+    cuny_browser_use_llm: str = Field(default="browser-use-llm", alias="CUNY_BROWSER_USE_LLM")
     
     # RateMyProfessors Configuration
     ratemyprof_base_url: str = Field(
@@ -94,6 +107,8 @@ class Settings(BaseSettings):
     log_format: str = Field(default="json", alias="LOG_FORMAT")  # json or text
     log_max_bytes: int = Field(default=10_485_760, alias="LOG_MAX_BYTES")  # 10MB
     log_backup_count: int = Field(default=5, alias="LOG_BACKUP_COUNT")
+    log_full_tool_results: bool = Field(default=False, alias="LOG_FULL_TOOL_RESULTS")
+    log_tool_result_preview_chars: int = Field(default=200, alias="LOG_TOOL_RESULT_PREVIEW_CHARS")
     
     # API Configuration
     api_host: str = Field(default="0.0.0.0", alias="API_HOST")
@@ -113,9 +128,6 @@ class Settings(BaseSettings):
     model_config = SettingsConfigDict(
         env_file=(
             Path(__file__).parent.parent.parent / ".env",        # Root .env
-            Path(__file__).parent.parent.parent / ".env.local",  # Root .env.local
-            Path(__file__).parent.parent / ".env",               # services/.env
-            Path(__file__).parent.parent / ".env.local",         # services/.env.local
         ),
         env_file_encoding="utf-8",
         case_sensitive=False,

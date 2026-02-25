@@ -5,7 +5,7 @@ import time
 from datetime import datetime
 from typing import List, Dict, Any, Optional
 
-from mcp_server.services.cuny_global_search_scraper import cuny_scraper
+from mcp_server.services.cuny_ingestion_orchestrator import cuny_ingestion_orchestrator
 from mcp_server.services.supabase_service import supabase_service
 from mcp_server.utils.logger import get_logger
 from mcp_server.utils.metrics import metrics_collector
@@ -17,6 +17,7 @@ logger = get_logger(__name__)
 async def sync_courses_job(
     semester: Optional[str] = None, 
     university: Optional[str] = None,
+    subject_code: Optional[str] = None,
     force: bool = False
 ) -> Dict[str, Any]:
     """
@@ -24,7 +25,8 @@ async def sync_courses_job(
     
     Args:
         semester: Optional specific semester to sync
-        university: Optional specific university to sync (not used by scraper yet, but good for future)
+        university: Optional specific university to sync
+        subject_code: Optional subject code to limit scraping (e.g., "CSC")
         force: Force sync even if fresh (handled by caller usually)
     """
     logger.info("=" * 60)
@@ -45,29 +47,35 @@ async def sync_courses_job(
         total_courses = 0
         total_sections = 0
         errors = []
+        warnings: List[str] = []
+        final_source = "none"
+        fallback_used = False
         
         for sem in semesters:
             logger.info(f"Syncing semester: {sem}")
             
             try:
-                # Scrape courses
-                # Note: cuny_scraper currently scrapes all universities for a semester
-                # If we want to filter by university, we'd need to update the scraper or filter results here
-                courses = await cuny_scraper.scrape_semester_courses(sem)
+                ingestion_result = await cuny_ingestion_orchestrator.fetch_courses(
+                    sem,
+                    university=university,
+                    subject_code=subject_code,
+                )
+                courses = ingestion_result.courses
+                final_source = ingestion_result.source
+                fallback_used = ingestion_result.fallback_used
+                if ingestion_result.warnings:
+                    warnings.extend(ingestion_result.warnings)
+
+                if not ingestion_result.success and not courses:
+                    raise RuntimeError(ingestion_result.error or "Course ingestion failed")
                 
                 # Record scraping success
                 await metrics_collector.record_scraping("cuny_courses", success=True)
                 
                 if not courses:
-                    logger.warning(f"No courses found for {sem}")
+                    logger.warning(f"No courses found for {sem}" +
+                                    (f" at {university}" if university else ""))
                     continue
-                
-                # Filter by university if specified
-                if university:
-                    courses = [c for c in courses if c.get('university') == university]
-                    if not courses:
-                        logger.info(f"No courses found for {university} in {sem}")
-                        continue
                 
                 # Prepare data for bulk insert
                 courses_data = []
@@ -154,7 +162,10 @@ async def sync_courses_job(
             'courses_synced': total_courses,
             'sections_synced': total_sections,
             'duration_seconds': duration_seconds,
-            'errors': errors
+            'errors': errors,
+            'warnings': warnings,
+            'source': final_source,
+            'fallback_used': fallback_used,
         }
     
     except Exception as e:
@@ -176,7 +187,7 @@ async def sync_courses_job(
     
     finally:
         # Cleanup
-        cuny_scraper.close()
+        cuny_ingestion_orchestrator.close()
 
 
 def _get_semesters_to_sync() -> List[str]:

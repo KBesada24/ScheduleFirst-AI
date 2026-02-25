@@ -46,6 +46,8 @@ sys.modules['mcp_server.utils.cache'] = MagicMock()
 sys.modules['mcp_server.utils.cache_manager'] = MagicMock()
 sys.modules['mcp_server.utils.circuit_breaker'] = MagicMock()
 sys.modules['mcp_server.utils.exceptions'] = MagicMock()
+sys.modules['mcp_server.utils.tool_result_logging'] = MagicMock()
+sys.modules['mcp_server.utils.chat_tool_result'] = MagicMock()
 sys.modules['mcp_server.models'] = MagicMock()
 
 # Assign dummy models to mocked modules
@@ -127,32 +129,33 @@ async def test_chat_with_ai_uses_extracted_context():
     }
 
     # Mock Ollama Client
-    with patch('api_server.OllamaClient') as MockOllamaClient:
-        mock_client = MagicMock()
-        MockOllamaClient.return_value = mock_client
-        
-        # Build mock response (no tool calls, just text)
-        mock_response = MagicMock()
-        mock_response.message.content = "Here are courses"
-        mock_response.message.tool_calls = None
-        
-        mock_client.chat.return_value = mock_response
+    mock_client = MagicMock()
 
+    # Build mock response (no tool calls, just text)
+    mock_response = MagicMock()
+    mock_response.message.content = "Here are courses"
+    mock_response.message.tool_calls = None
+
+    mock_client.chat.return_value = mock_response
+
+    mock_ollama_module = MagicMock()
+    mock_ollama_module.Client.return_value = mock_client
+
+    with patch.dict(sys.modules, {'ollama': mock_ollama_module}):
         # Call function
         await chat_with_ai(message)
 
-        # Verify that the system message contains the extracted context values
-        call_kwargs = mock_client.chat.call_args
-        messages = call_kwargs.kwargs.get('messages') or call_kwargs[1].get('messages')
-        
-        # The first message should be the system instruction
-        system_msg = messages[0]
-        assert system_msg['role'] == 'system'
-        system_content = system_msg['content']
-        
-        # The extracted values should be injected into the "CURRENT CONTEXT" section
-        # Extracted "Hunter College" from history should be used (history > context priority)
-        assert "University: Hunter College" in system_content
-        # "Fall 2024" from context.semester takes priority over "Fall 2025" from history
-        # (context.get("semester") is checked first in the priority chain)
-        assert "Semester: Fall 2024" in system_content
+    # Verify that the system message contains the extracted context values
+    call_kwargs = mock_client.chat.call_args
+    messages = call_kwargs.kwargs.get('messages') or call_kwargs[1].get('messages')
+
+    # The first message should be the system instruction
+    system_msg = messages[0]
+    assert system_msg['role'] == 'system'
+    system_content = system_msg['content']
+
+    # The extracted values should be injected into the "CURRENT CONTEXT" section
+    # Extracted "Hunter College" from history should be used (history > context priority)
+    assert "University: Hunter College" in system_content
+    # "Fall 2025" from history takes priority over stale frontend context values
+    assert "Semester: Fall 2025" in system_content

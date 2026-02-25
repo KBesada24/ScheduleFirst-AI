@@ -64,7 +64,7 @@ async def test_data_population_caching():
         
         # First call - should trigger sync
         result1 = await data_population_service.ensure_course_data("Fall 2025", "CUNY")
-        assert result1 is True
+        assert result1.success is True
         assert mock_sync.call_count == 1
         
         # Second call - should hit cache and NOT trigger sync
@@ -72,10 +72,10 @@ async def test_data_population_caching():
         mock_sync.reset_mock()
         
         result2 = await data_population_service.ensure_course_data("Fall 2025", "CUNY")
-        assert result2 is True
+        assert result2.success is True
         assert mock_sync.call_count == 0
         
         # Force call - should trigger sync
         result3 = await data_population_service.ensure_course_data("Fall 2025", "CUNY", force=True)
-        assert result3 is True
+        assert result3.success is True
         assert mock_sync.call_count == 1

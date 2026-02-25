@@ -2,6 +2,7 @@
 MCP Tools for CUNY Schedule Optimizer
 FastMCP tool definitions for schedule optimization and professor evaluation
 """
+import re
 from datetime import datetime
 from typing import List, Dict, Optional
 from fastmcp import FastMCP
@@ -30,6 +31,33 @@ logger = get_logger(__name__)
 
 # Initialize FastMCP server
 mcp = FastMCP("CUNY Schedule Optimizer")
+
+
+def _derive_subject_scope(course_codes: List[str]) -> Optional[str]:
+    """Return a subject code when all course codes share one subject prefix."""
+    if not course_codes:
+        return None
+
+    subjects = set()
+    for course_code in course_codes:
+        match = re.match(r"^\s*([A-Za-z]{2,4})\s?\d{3,4}\s*$", course_code or "")
+        if not match:
+            return None
+        subjects.add(match.group(1).upper())
+
+    if len(subjects) == 1:
+        return next(iter(subjects))
+    return None
+
+
+def _normalize_course_code_for_lookup(course_code: str) -> str:
+    """Normalize user-entered course code into canonical DB lookup format."""
+    match = re.match(r"^\s*([A-Za-z]{2,4})\s*[- ]?\s*(\d{3,4}[A-Za-z]?)\s*$", course_code or "")
+    if match:
+        subject = match.group(1).upper()
+        number = match.group(2).upper()
+        return f"{subject} {number}"
+    return (course_code or "").strip().upper()
 
 
 def _build_response(
@@ -100,8 +128,48 @@ async def fetch_course_sections(
         
         target_university = university or "Baruch College"
         
-        # Trigger population for this semester/university
-        population_result = await data_population_service.ensure_course_data(semester, target_university)
+        # Trigger population for this semester/university.
+        # Scope to a single subject when possible to avoid full-school scrape fan-out.
+        subject_code = _derive_subject_scope(course_codes)
+        logger.info(
+            "Derived subject scope for request",
+            extra={
+                "course_codes": course_codes,
+                "derived_subject_code": subject_code,
+                "semester": semester,
+                "target_university": target_university,
+            },
+        )
+        if subject_code:
+            population_result = await data_population_service.ensure_course_data(
+                semester,
+                target_university,
+                force=True,
+                subject_code=subject_code,
+            )
+        else:
+            population_result = await data_population_service.ensure_course_data(
+                semester,
+                target_university,
+                force=True,
+            )
+
+        logger.info(
+            "Population result received",
+            extra={
+                "success": population_result.success,
+                "source": population_result.source,
+                "fallback_used": population_result.fallback_used,
+                "warnings": population_result.warnings,
+                "is_partial": population_result.is_partial,
+                "error": population_result.error,
+            },
+        )
+
+        if not population_result.success:
+            data_quality = "degraded"
+            warning = population_result.error or "On-demand data population failed; returning best-effort results"
+            warnings.append(f"Population warning: {warning}")
         if population_result.warnings:
             warnings.extend(population_result.warnings)
         if population_result.is_partial:
@@ -109,21 +177,22 @@ async def fetch_course_sections(
         
         for course_code in course_codes:
             try:
+                lookup_course_code = _normalize_course_code_for_lookup(course_code)
                 if not university:
                     courses = await supabase_service.search_courses(
                         CourseSearchFilter(
-                            course_code=course_code,
+                            course_code=lookup_course_code,
                             semester=semester
                         )
                     )
                     course = courses[0] if courses else None
                 else:
                     course = await supabase_service.get_course_by_code(
-                        course_code, semester, university
+                        lookup_course_code, semester, university
                     )
                 
                 if not course:
-                    courses_not_found.append(course_code)
+                    courses_not_found.append(lookup_course_code)
                     continue
                 
                 # Get sections
@@ -153,7 +222,7 @@ async def fetch_course_sections(
                     ]
                 })
             except DataNotFoundError:
-                courses_not_found.append(course_code)
+                courses_not_found.append(_normalize_course_code_for_lookup(course_code))
             except DatabaseError as e:
                 logger.warning(f"Database error fetching {course_code}: {e}")
                 warnings.append(f"Could not fetch {course_code}: database error")
@@ -171,7 +240,8 @@ async def fetch_course_sections(
                 'total_courses': len(sections_data),
                 'courses': sections_data,
                 'metadata': {
-                    'source': 'hybrid',
+                    'source': population_result.source,
+                    'fallback_used': population_result.fallback_used,
                     'auto_populated': True
                 }
             },
@@ -634,6 +704,19 @@ async def check_schedule_conflicts(
             error="An unexpected error occurred while checking conflicts",
             error_code="INTERNAL_ERROR",
         )
+
+
+# Compatibility shim: some FastMCP versions return plain callables instead of
+# wrapper objects exposing `.fn`. Tests and internal callers rely on `.fn`.
+for _tool in [
+    fetch_course_sections,
+    generate_optimized_schedule,
+    get_professor_grade,
+    compare_professors,
+    check_schedule_conflicts,
+]:
+    if not hasattr(_tool, "fn"):
+        _tool.fn = _tool
 
 
 # Export MCP server instance

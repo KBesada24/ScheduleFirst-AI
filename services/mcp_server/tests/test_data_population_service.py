@@ -270,6 +270,93 @@ class TestDataPopulationServiceEnsureCourseData:
             assert result.success is True
             assert any("freshness" in w.lower() for w in result.warnings)
 
+    @pytest.mark.asyncio
+    async def test_forwards_subject_code_to_sync_job(self, service):
+        """Should pass subject_code through to sync job when provided"""
+        with patch(
+            'mcp_server.services.data_population_service.cache_manager'
+        ) as mock_cache, patch(
+            'mcp_server.services.data_population_service.data_freshness_service'
+        ) as mock_freshness, patch(
+            'mcp_server.services.data_population_service.sync_courses_job',
+            new_callable=AsyncMock
+        ) as mock_sync:
+            mock_cache.get = AsyncMock(return_value=None)
+            mock_cache.set = AsyncMock()
+            mock_freshness.is_course_data_fresh = AsyncMock(return_value=False)
+            mock_freshness.mark_sync_in_progress = AsyncMock()
+            mock_sync.return_value = {"success": True}
+
+            result = await service.ensure_course_data(
+                "Spring 2026",
+                "College of Staten Island",
+                subject_code="CSC",
+            )
+
+            assert result.success is True
+            mock_sync.assert_called_once_with(
+                semester="Spring 2026",
+                university="College of Staten Island",
+                subject_code="CSC",
+            )
+
+    @pytest.mark.asyncio
+    async def test_propagates_source_metadata_from_sync_job(self, service):
+        """Should propagate source and fallback metadata from sync result"""
+        with patch(
+            'mcp_server.services.data_population_service.cache_manager'
+        ) as mock_cache, patch(
+            'mcp_server.services.data_population_service.data_freshness_service'
+        ) as mock_freshness, patch(
+            'mcp_server.services.data_population_service.sync_courses_job',
+            new_callable=AsyncMock
+        ) as mock_sync:
+            mock_cache.get = AsyncMock(return_value=None)
+            mock_cache.set = AsyncMock()
+            mock_freshness.is_course_data_fresh = AsyncMock(return_value=False)
+            mock_freshness.mark_sync_in_progress = AsyncMock()
+            mock_sync.return_value = {
+                "success": True,
+                "source": "selenium_fallback",
+                "fallback_used": True,
+                "warnings": ["Primary source failed"],
+            }
+
+            result = await service.ensure_course_data("Spring 2026", "Baruch College")
+
+            assert result.success is True
+            assert result.source == "selenium_fallback"
+            assert result.fallback_used is True
+            assert any("primary source failed" in warning.lower() for warning in result.warnings)
+
+    @pytest.mark.asyncio
+    async def test_returns_degraded_failure_when_all_sources_fail(self, service):
+        """Should return a structured degraded failure when sync result indicates no source available"""
+        with patch(
+            'mcp_server.services.data_population_service.cache_manager'
+        ) as mock_cache, patch(
+            'mcp_server.services.data_population_service.data_freshness_service'
+        ) as mock_freshness, patch(
+            'mcp_server.services.data_population_service.sync_courses_job',
+            new_callable=AsyncMock
+        ) as mock_sync:
+            mock_cache.get = AsyncMock(return_value=None)
+            mock_freshness.is_course_data_fresh = AsyncMock(return_value=False)
+            mock_freshness.mark_sync_in_progress = AsyncMock()
+            mock_sync.return_value = {
+                "success": False,
+                "source": "none",
+                "fallback_used": False,
+                "error": "No ingestion source enabled",
+            }
+
+            result = await service.ensure_course_data("Spring 2026", "Baruch College")
+
+            assert result.success is False
+            assert result.source == "none"
+            assert result.fallback_used is False
+            assert "no ingestion source enabled" in (result.error or "").lower()
+
 
 class TestDataPopulationServiceEnsureProfessorData:
     """Tests for ensure_professor_data method"""

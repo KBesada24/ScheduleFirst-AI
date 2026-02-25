@@ -224,6 +224,15 @@ All configuration is managed via environment variables in `.env`:
 | `DATABASE_URL` | PostgreSQL connection string | Yes |
 | `LOG_LEVEL` | Logging level (INFO, DEBUG, etc.) | No |
 | `SCRAPER_REQUEST_DELAY` | Delay between scraper requests (seconds) | No |
+| `CUNY_BROWSER_USE_ENABLED` | Enable Browser-Use as primary ingestion source | No |
+| `CUNY_SELENIUM_FALLBACK_ENABLED` | Enable Selenium fallback when primary fails | No |
+| `CUNY_SHADOW_MODE` | Run Browser-Use + Selenium comparison without changing response source | No |
+| `CUNY_BROWSER_USE_TIMEOUT` | Browser-Use connector timeout in seconds | No |
+| `CUNY_BROWSER_USE_MAX_RETRIES` | Browser-Use retry attempts before fallback | No |
+| `BROWSER_USE_API_KEY` | Browser-Use Cloud API key for v2 task execution | No |
+| `CUNY_BROWSER_USE_POLL_INTERVAL` | Browser-Use cloud task polling interval in seconds | No |
+| `CUNY_BROWSER_USE_MAX_STEPS` | Max Browser-Use agent steps per cloud task | No |
+| `CUNY_BROWSER_USE_LLM` | Browser-Use cloud model identifier (default: browser-use-llm) | No |
 
 ## 📝 Logging
 

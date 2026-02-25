@@ -211,7 +211,11 @@ class TestFetchCourseSections:
             'mcp_server.tools.schedule_optimizer.supabase_service'
         ) as mock_supabase:
             mock_population.ensure_course_data = AsyncMock(
-                return_value=PopulationResult(success=True)
+                return_value=PopulationResult(
+                    success=True,
+                    source="browser_use",
+                    fallback_used=False,
+                )
             )
             mock_supabase.search_courses = AsyncMock(return_value=[course])
             mock_supabase.get_sections_by_course = AsyncMock(return_value=[])
@@ -222,8 +226,147 @@ class TestFetchCourseSections:
             )
             
             assert "metadata" in result
-            assert result["metadata"]["source"] == "hybrid"
+            assert result["metadata"]["source"] == "browser_use"
+            assert result["metadata"]["fallback_used"] is False
             assert result["metadata"]["auto_populated"] is True
+
+    @pytest.mark.asyncio
+    async def test_passes_subject_code_for_single_subject_requests(self):
+        """Should scope population to the subject when all requested courses share one subject"""
+        with patch(
+            'mcp_server.tools.schedule_optimizer.data_population_service'
+        ) as mock_population, patch(
+            'mcp_server.tools.schedule_optimizer.supabase_service'
+        ) as mock_supabase:
+            mock_population.ensure_course_data = AsyncMock(
+                return_value=PopulationResult(success=True)
+            )
+            mock_supabase.search_courses = AsyncMock(return_value=[])
+
+            await fetch_course_sections_fn(
+                course_codes=["CSC101", "CSC126"],
+                semester="Spring 2026",
+                university="College of Staten Island",
+            )
+
+            mock_population.ensure_course_data.assert_called_once_with(
+                "Spring 2026",
+                "College of Staten Island",
+                force=True,
+                subject_code="CSC",
+            )
+
+    @pytest.mark.asyncio
+    async def test_forces_population_sync_to_trigger_live_ingestion(self):
+        """Should force population so Browser-Use orchestration runs instead of fresh-cache short-circuit"""
+        with patch(
+            'mcp_server.tools.schedule_optimizer.data_population_service'
+        ) as mock_population, patch(
+            'mcp_server.tools.schedule_optimizer.supabase_service'
+        ) as mock_supabase:
+            mock_population.ensure_course_data = AsyncMock(
+                return_value=PopulationResult(success=True)
+            )
+            mock_supabase.search_courses = AsyncMock(return_value=[])
+
+            await fetch_course_sections_fn(
+                course_codes=["BIO101"],
+                semester="Spring 2026",
+            )
+
+            mock_population.ensure_course_data.assert_called_once_with(
+                "Spring 2026",
+                "Baruch College",
+                force=True,
+                subject_code="BIO",
+            )
+
+    @pytest.mark.asyncio
+    async def test_marks_degraded_when_population_fails(self):
+        """Should report degraded quality and warning when population sync fails"""
+        with patch(
+            'mcp_server.tools.schedule_optimizer.data_population_service'
+        ) as mock_population, patch(
+            'mcp_server.tools.schedule_optimizer.supabase_service'
+        ) as mock_supabase:
+            mock_population.ensure_course_data = AsyncMock(
+                return_value=PopulationResult(
+                    success=False,
+                    error="Course sync failed: timeout",
+                )
+            )
+            mock_supabase.get_course_by_code = AsyncMock(return_value=None)
+
+            result = await fetch_course_sections_fn(
+                course_codes=["CSC101"],
+                semester="Spring 2026",
+                university="College of Staten Island",
+            )
+
+            assert result["success"] is True
+            assert result["data_quality"] == "degraded"
+            assert any("population" in warning.lower() for warning in result["warnings"])
+
+    @pytest.mark.asyncio
+    async def test_propagates_population_source_metadata(self):
+        """Should propagate ingestion source and fallback_used metadata"""
+        course = create_mock_course(course_code="CSC101")
+
+        with patch(
+            'mcp_server.tools.schedule_optimizer.data_population_service'
+        ) as mock_population, patch(
+            'mcp_server.tools.schedule_optimizer.supabase_service'
+        ) as mock_supabase:
+            mock_population.ensure_course_data = AsyncMock(
+                return_value=PopulationResult(
+                    success=True,
+                    warnings=["fallback used"],
+                    is_partial=True,
+                    source="selenium_fallback",
+                    fallback_used=True,
+                )
+            )
+            mock_supabase.search_courses = AsyncMock(return_value=[course])
+            mock_supabase.get_sections_by_course = AsyncMock(return_value=[])
+
+            result = await fetch_course_sections_fn(
+                course_codes=["CSC101"],
+                semester="Spring 2026",
+            )
+
+            assert result["success"] is True
+            assert result["metadata"]["source"] == "selenium_fallback"
+            assert result["metadata"]["fallback_used"] is True
+
+    @pytest.mark.asyncio
+    async def test_normalizes_compact_course_codes_for_lookup(self):
+        """Should normalize compact codes like CSC126 to CSC 126 for DB lookups"""
+        course = create_mock_course(course_code="CSC 126")
+
+        with patch(
+            'mcp_server.tools.schedule_optimizer.data_population_service'
+        ) as mock_population, patch(
+            'mcp_server.tools.schedule_optimizer.supabase_service'
+        ) as mock_supabase:
+            mock_population.ensure_course_data = AsyncMock(
+                return_value=PopulationResult(success=True)
+            )
+            mock_supabase.get_course_by_code = AsyncMock(return_value=course)
+            mock_supabase.get_sections_by_course = AsyncMock(return_value=[])
+
+            result = await fetch_course_sections_fn(
+                course_codes=["CSC126"],
+                semester="Spring 2026",
+                university="College of Staten Island",
+            )
+
+            mock_supabase.get_course_by_code.assert_awaited_once_with(
+                "CSC 126",
+                "Spring 2026",
+                "College of Staten Island",
+            )
+            assert result["success"] is True
+            assert result["total_courses"] == 1
 
 
 class TestGenerateOptimizedSchedule:

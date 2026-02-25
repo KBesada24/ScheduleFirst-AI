@@ -19,6 +19,9 @@ from mcp_server.utils.circuit_breaker import (
 )
 
 
+_LAST_UPDATED_UNSET = object()
+
+
 # ============ Time Helpers ============
 
 def get_fresh_timestamp(ttl_seconds: int = 3600) -> datetime:
@@ -89,8 +92,8 @@ def create_mock_section(
     """Factory function to create mock CourseSection objects"""
     data = {
         "id": id or uuid4(),
-        "course_id": course_id or uuid4(),
         "section_number": section_number,
+        "course_id": course_id or uuid4(),
         "professor_id": professor_id,
         "professor_name": professor_name,
         "days": days,
@@ -118,7 +121,7 @@ def create_mock_professor(
     review_count: Optional[int] = 50,
     grade_letter: Optional[str] = "B+",
     composite_score: Optional[int] = 85,
-    last_updated: Optional[datetime] = None,
+    last_updated: Optional[datetime] | object = _LAST_UPDATED_UNSET,
     data_source: str = "ratemyprof",
     **overrides
 ) -> Professor:
@@ -134,7 +137,7 @@ def create_mock_professor(
         "review_count": review_count,
         "grade_letter": grade_letter,
         "composite_score": composite_score,
-        "last_updated": last_updated or datetime.now(),
+        "last_updated": datetime.now() if last_updated is _LAST_UPDATED_UNSET else last_updated,
         "data_source": data_source,
         "created_at": datetime.now(),
         **overrides
@@ -169,7 +172,6 @@ def create_mock_review(
         **overrides
     }
     return ProfessorReview(**data)
-
 
 def create_mock_sync_metadata(
     id: Optional[UUID] = None,

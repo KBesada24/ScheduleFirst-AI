@@ -23,7 +23,7 @@ const API_BASE_URL = import.meta.env.VITE_API_URL || "http://localhost:8000";
 
 // Timeout configuration
 const REQUEST_TIMEOUT = 30000; // 30 seconds
-const AI_REQUEST_TIMEOUT = 60000; // 60 seconds for AI operations
+export const AI_REQUEST_TIMEOUT = 180000; // 3 minutes for AI operations
 
 // Warning toast callback - set by consuming code to integrate with toast system
 let showWarningToast: ((toast: ReturnType<typeof createWarningsToasts>[0]) => void) | null = null;

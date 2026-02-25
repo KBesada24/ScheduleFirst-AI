@@ -1,7 +1,7 @@
 import sys
 import os
 import pytest
-from unittest.mock import MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 # Add services directory to path
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '../services')))
@@ -47,6 +47,8 @@ sys.modules['mcp_server.utils.cache'] = MagicMock()
 sys.modules['mcp_server.utils.cache_manager'] = MagicMock()
 sys.modules['mcp_server.utils.circuit_breaker'] = MagicMock()
 sys.modules['mcp_server.utils.exceptions'] = MagicMock()
+sys.modules['mcp_server.utils.tool_result_logging'] = MagicMock()
+sys.modules['mcp_server.utils.chat_tool_result'] = MagicMock()
 sys.modules['mcp_server.models'] = MagicMock()
 
 # Assign dummy models to mocked modules
@@ -88,7 +90,7 @@ async def test_chat_with_ai_history():
     }
 
     # Mock Ollama Client
-    with patch('api_server.OllamaClient') as MockOllamaClient:
+    with patch('ollama.Client') as MockOllamaClient:
         mock_client = MagicMock()
         MockOllamaClient.return_value = mock_client
         
@@ -117,3 +119,78 @@ async def test_chat_with_ai_history():
         assert any(m.get('content') == "Hello Baruch student" and m.get('role') == 'assistant' for m in history_messages)
         # Check that the current user message is the last one
         assert messages[-1] == {'role': 'user', 'content': 'What courses?'}
+
+
+@pytest.mark.asyncio
+async def test_chat_dedupes_identical_fetch_tool_calls_within_request():
+    message = {
+        "message": "Can you find CSC 126 sections?",
+        "context": {
+            "university": "College of Staten Island",
+            "semester": "Spring 2026",
+        },
+        "history": [],
+    }
+
+    tool_result = {
+        "success": True,
+        "total_courses": 1,
+        "courses": [
+            {
+                "course_code": "CSC 126",
+                "sections": [],
+            }
+        ],
+        "metadata": {"source": "selenium_fallback", "fallback_used": True},
+    }
+
+    duplicate_args = {
+        "course_codes": ["CSC 126"],
+        "semester": "Spring 2026",
+        "university": "College of Staten Island",
+    }
+
+    mock_tool_call_1 = MagicMock()
+    mock_tool_call_1.function.name = "fetch_course_sections"
+    mock_tool_call_1.function.arguments = duplicate_args
+
+    mock_tool_call_2 = MagicMock()
+    mock_tool_call_2.function.name = "fetch_course_sections"
+    mock_tool_call_2.function.arguments = duplicate_args
+
+    response_with_first_call = MagicMock()
+    response_with_first_call.message.content = ""
+    response_with_first_call.message.tool_calls = [mock_tool_call_1]
+
+    response_with_duplicate_call = MagicMock()
+    response_with_duplicate_call.message.content = ""
+    response_with_duplicate_call.message.tool_calls = [mock_tool_call_2]
+
+    final_response = MagicMock()
+    final_response.message.content = "Here are your options"
+    final_response.message.tool_calls = None
+
+    schedule_optimizer_module = sys.modules['mcp_server.tools.schedule_optimizer']
+    schedule_optimizer_module.fetch_course_sections.fn = AsyncMock(return_value=tool_result)
+    schedule_optimizer_module.generate_optimized_schedule.fn = AsyncMock(return_value={"success": True})
+    schedule_optimizer_module.get_professor_grade.fn = AsyncMock(return_value={"success": True})
+    schedule_optimizer_module.compare_professors.fn = AsyncMock(return_value={"success": True})
+
+    mock_client = MagicMock()
+    mock_client.chat.side_effect = [
+        response_with_first_call,
+        response_with_duplicate_call,
+        final_response,
+    ]
+
+    mock_ollama_module = MagicMock()
+    mock_ollama_module.Client.return_value = mock_client
+
+    with patch.dict(sys.modules, {'ollama': mock_ollama_module}):
+        await chat_with_ai(message)
+
+    schedule_optimizer_module.fetch_course_sections.fn.assert_called_once_with(
+        course_codes=["CSC 126"],
+        semester="Spring 2026",
+        university="College of Staten Island",
+    )

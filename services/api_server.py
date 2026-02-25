@@ -39,6 +39,7 @@ from mcp_server.services.data_population_service import data_population_service
 from mcp_server.services.data_freshness_service import data_freshness_service
 from mcp_server.tools.schedule_optimizer import compare_professors
 from mcp_server.utils.circuit_breaker import circuit_breaker_registry
+from mcp_server.utils.tool_result_logging import format_tool_result_for_log
 
 logger = get_logger(__name__)
 
@@ -837,6 +838,7 @@ async def chat_with_ai(message: Dict[str, Any]):
             get_professor_grade,
             compare_professors as compare_professors_tool,
         )
+        from mcp_server.utils.chat_tool_result import pick_better_fetch_sections_result
         
         user_message = message.get("message", "")
         context = message.get("context", {})
@@ -874,16 +876,16 @@ async def chat_with_ai(message: Dict[str, Any]):
             context.get("university")
         )
         
-        # Priority for semester: 
-        # 1. Frontend persisted (user told us before)
-        # 2. Current message override
-        # 3. Chat history
-        # 4. Auto-calculated default (always have a valid semester)
+        # Priority for semester:
+        # 1. Current message (what user is saying RIGHT NOW)
+        # 2. Chat history (what user said earlier this session)
+        # 3. Backend-calculated default (always Spring 2026 until changed)
+        # 4. Frontend persisted cache (lowest - may be stale from old sessions)
         semester = (
-            context.get("semester") or              # Persisted from previous conversation
-            current_msg_context["semester"] or      # Current message override
-            history_context["semester"] or          # From chat history
-            default_semester                        # Auto-calculated fallback
+            current_msg_context["semester"] or      # Explicit in current message (highest trust)
+            history_context["semester"] or          # Mentioned earlier this session
+            default_semester or                     # Backend-calculated default (Spring 2026)
+            context.get("semester")                 # Stale frontend cache (lowest priority)
         )
         
         university_str = university if university else "Not yet specified"
@@ -1030,6 +1032,8 @@ When presenting course sections, include: section number, days/times, professor 
             messages=messages,
             tools=tools,
         )
+        last_fetch_sections_result: Optional[Dict[str, Any]] = None
+        fetch_sections_result_cache: Dict[str, Any] = {}
         
         # Handle function calling loop (max 6 tool calls)
         tool_call_count = 0
@@ -1085,11 +1089,39 @@ When presenting course sections, include: section number, days/times, professor 
                                 "suggestions": ["Please specify your school like 'Baruch College' or 'Hunter College'"]
                             }
                         else:
-                            result = await fetch_course_sections.fn(
-                                course_codes=course_codes,
-                                semester=effective_semester,
-                                university=effective_university
-                            )
+                            dedupe_key_payload = {
+                                "course_codes": [
+                                    str(code).strip().upper()
+                                    for code in course_codes
+                                ],
+                                "semester": str(effective_semester).strip(),
+                                "university": str(effective_university).strip(),
+                            }
+                            dedupe_key = json_module.dumps(dedupe_key_payload, sort_keys=True)
+
+                            if dedupe_key in fetch_sections_result_cache:
+                                result = fetch_sections_result_cache[dedupe_key]
+                                logger.info(
+                                    "Reusing cached fetch_course_sections result within chat request",
+                                    extra={
+                                        "course_codes": dedupe_key_payload["course_codes"],
+                                        "semester": dedupe_key_payload["semester"],
+                                        "university": dedupe_key_payload["university"],
+                                    },
+                                )
+                            else:
+                                result = await fetch_course_sections.fn(
+                                    course_codes=course_codes,
+                                    semester=effective_semester,
+                                    university=effective_university
+                                )
+                                fetch_sections_result_cache[dedupe_key] = result
+
+                            if isinstance(result, dict):
+                                last_fetch_sections_result = pick_better_fetch_sections_result(
+                                    last_fetch_sections_result,
+                                    result,
+                                )
                     elif fc_name == "generate_optimized_schedule":
                         course_codes = args.get("course_codes", [])
                         if not course_codes:
@@ -1166,7 +1198,12 @@ When presenting course sections, include: section number, days/times, professor 
                     else:
                         result = {"error": f"Unknown function: {fc_name}", "error_code": "UNKNOWN_FUNCTION"}
                     
-                    logger.info(f"Tool {fc_name} result: {str(result)[:200]}...")
+                    formatted_result = format_tool_result_for_log(
+                        result,
+                        max_chars=settings.log_tool_result_preview_chars,
+                        full=settings.log_full_tool_results,
+                    )
+                    logger.info(f"Tool {fc_name} result: {formatted_result}")
                     
                 except Exception as tool_error:
                     logger.error(f"Error executing tool {fc_name}: {tool_error}")
@@ -1185,9 +1222,58 @@ When presenting course sections, include: section number, days/times, professor 
                 messages=messages,
                 tools=tools,
             )
+
+        if last_fetch_sections_result is None and tool_call_count == 0 and semester and university:
+            import re
+
+            inferred_course_codes = re.findall(r"\b[A-Za-z]{2,4}\s?\d{3}[A-Za-z]?\b", user_message)
+            normalized_codes = [
+                f"{match[:-3].strip().upper()} {match[-3:].upper()}"
+                if " " not in match.strip()
+                else match.strip().upper()
+                for match in inferred_course_codes
+            ]
+            if normalized_codes:
+                try:
+                    inferred_result = await fetch_course_sections.fn(
+                        course_codes=normalized_codes,
+                        semester=semester,
+                        university=university,
+                    )
+                    if isinstance(inferred_result, dict):
+                        last_fetch_sections_result = pick_better_fetch_sections_result(
+                            last_fetch_sections_result,
+                            inferred_result,
+                        )
+                except Exception as infer_error:
+                    logger.warning(
+                        "Auto-fetch fallback for course-code query failed",
+                        extra={"error": str(infer_error), "course_codes": normalized_codes},
+                    )
         
         # Extract final text response
         final_text = response.message.content or ""
+
+        if isinstance(last_fetch_sections_result, dict):
+            success = bool(last_fetch_sections_result.get("success"))
+            total_courses = int(last_fetch_sections_result.get("total_courses") or 0)
+            courses = last_fetch_sections_result.get("courses") or []
+            if success and total_courses > 0 and isinstance(courses, list):
+                total_sections = 0
+                first_course_code = "Requested course"
+                for idx, course in enumerate(courses):
+                    if not isinstance(course, dict):
+                        continue
+                    if idx == 0:
+                        first_course_code = course.get("course_code") or first_course_code
+                    sections = course.get("sections") or []
+                    if isinstance(sections, list):
+                        total_sections += len(sections)
+
+                final_text = (
+                    f"I found {total_courses} matching course(s) for {semester_str} at {university_str}. "
+                    f"{first_course_code} is available with {total_sections} section(s) currently returned."
+                )
         
         if not final_text:
             final_text = "I encountered an issue processing your request. Please try again."

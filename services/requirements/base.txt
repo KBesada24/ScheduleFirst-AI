@@ -1,6 +1,6 @@
 # Core dependencies
 fastmcp>=0.2.0
-ollama>=0.4.0
+google-genai>=1.0.0
 supabase>=2.4.0
 postgrest>=0.10.0  # Explicitly listed for postgrest.exceptions
 pydantic>=2.6.0
@@ -9,6 +9,7 @@ pydantic-settings>=2.1.0
 # Web scraping
 beautifulsoup4>=4.12.0
 selenium>=4.18.0
+browser-use>=0.1.38
 httpx>=0.26.0
 webdriver-manager>=4.0.1
 

@@ -5,6 +5,7 @@ Handles all database operations via Supabase client
 from typing import List, Optional, Dict, Any, cast
 from uuid import UUID
 from datetime import datetime, timedelta
+import inspect
 
 from supabase import create_client, Client
 from postgrest.exceptions import APIError
@@ -64,6 +65,13 @@ class SupabaseService:
             is_retryable=is_retryable,
             details=context
         )
+
+    async def _execute_query(self, query: Any) -> Any:
+        """Execute a PostgREST query builder for both sync and async test doubles."""
+        result = query.execute()
+        if inspect.isawaitable(result):
+            return await result
+        return result
     
     # ============ Course Operations ============
     
@@ -536,11 +544,14 @@ class SupabaseService:
         context = {"entity_type": entity_type, "semester": semester, "university": university}
         try:
             async def _execute():
-                return self.client.table("sync_metadata").select("*").eq(
+                query = self.client.table("sync_metadata").select("*").eq(
                     "entity_type", entity_type
-                ).eq("semester", semester).eq("university", university).execute()
+                ).eq("semester", semester).eq("university", university)
+                return await self._execute_query(query)
             
             response = await supabase_breaker.call(_execute)
+            if inspect.isawaitable(response):
+                response = await response
             
             if response.data:
                 data = cast(Dict[str, Any], response.data[0])
@@ -571,17 +582,31 @@ class SupabaseService:
             }
             
             # Try to find existing first to get ID
-            existing = await self.get_sync_metadata(entity_type, semester, university)
+            try:
+                existing = await self.get_sync_metadata(entity_type, semester, university)
+            except DatabaseError as e:
+                raise DatabaseError(
+                    operation="update_sync_metadata",
+                    reason=(e.details or {}).get("reason"),
+                    is_retryable=e.is_retryable,
+                    details=context,
+                )
             
             if existing:
                 async def _execute():
-                    return self.client.table("sync_metadata").update(data).eq("id", str(existing.id)).execute()
+                    query = self.client.table("sync_metadata").update(data).eq("id", str(existing.id))
+                    return await self._execute_query(query)
             else:
                 async def _execute():
-                    return self.client.table("sync_metadata").insert(data).execute()
+                    query = self.client.table("sync_metadata").insert(data)
+                    return await self._execute_query(query)
             
-            await supabase_breaker.call(_execute)
+            response = await supabase_breaker.call(_execute)
+            if inspect.isawaitable(response):
+                await response
             return True
+        except DatabaseError:
+            raise
         except APIError as e:
             self._handle_api_error(e, "update_sync_metadata", context)
             return False
@@ -593,11 +618,14 @@ class SupabaseService:
             cutoff = datetime.now() - timedelta(seconds=ttl_seconds)
             
             async def _execute():
-                return self.client.table("sync_metadata").select("*").eq(
+                query = self.client.table("sync_metadata").select("*").eq(
                     "entity_type", entity_type
-                ).lt("last_sync", cutoff.isoformat()).execute()
+                ).lt("last_sync", cutoff.isoformat())
+                return await self._execute_query(query)
             
             response = await supabase_breaker.call(_execute)
+            if inspect.isawaitable(response):
+                response = await response
             return cast(List[Dict[str, Any]], response.data)
         except APIError as e:
             self._handle_api_error(e, "get_stale_entities", context)

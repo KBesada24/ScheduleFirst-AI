@@ -38,11 +38,15 @@ class PopulationResult:
         warnings: Optional[List[str]] = None,
         error: Optional[str] = None,
         is_partial: bool = False,
+        source: str = "none",
+        fallback_used: bool = False,
     ):
         self.success = success
         self.warnings = warnings or []
         self.error = error
         self.is_partial = is_partial
+        self.source = source
+        self.fallback_used = fallback_used
     
     def to_dict(self) -> Dict[str, Any]:
         return {
@@ -50,6 +54,8 @@ class PopulationResult:
             "warnings": self.warnings,
             "error": self.error,
             "is_partial": self.is_partial,
+            "source": self.source,
+            "fallback_used": self.fallback_used,
         }
 
 
@@ -65,7 +71,8 @@ class DataPopulationService:
         self, 
         semester: str, 
         university: str, 
-        force: bool = False
+        force: bool = False,
+        subject_code: Optional[str] = None,
     ) -> PopulationResult:
         """
         Ensure course data exists for a semester/university.
@@ -78,24 +85,25 @@ class DataPopulationService:
         
         try:
             # Check cache for recent success
-            cache_key = f"population:courses:{semester}:{university}"
+            cache_scope = f":{subject_code.upper()}" if subject_code else ""
+            cache_key = f"population:courses:{semester}:{university}{cache_scope}"
             if not force:
                 cached_result = await cache_manager.get(cache_key)
                 if cached_result:
-                    return PopulationResult(success=True)
+                    return PopulationResult(success=True, source="cache")
 
             # Check freshness if not forced
             if not force:
                 try:
                     is_fresh = await data_freshness_service.is_course_data_fresh(semester, university)
                     if is_fresh:
-                        return PopulationResult(success=True)
+                        return PopulationResult(success=True, source="fresh_cache")
                 except DatabaseError as e:
                     # Freshness check failed, continue with sync
                     logger.warning(f"Freshness check failed, proceeding with sync: {e}")
                     warnings.append("Could not verify data freshness")
             
-            lock_key = f"courses:{semester}:{university}"
+            lock_key = f"courses:{semester}:{university}{cache_scope}"
             
             # Acquire lock to prevent duplicate syncs
             async with await self._get_lock(lock_key):
@@ -103,11 +111,21 @@ class DataPopulationService:
                 if not force:
                     try:
                         if await data_freshness_service.is_course_data_fresh(semester, university):
-                            return PopulationResult(success=True)
+                            return PopulationResult(success=True, source="fresh_cache")
                     except DatabaseError:
                         pass  # Continue with sync
                 
                 logger.info(f"Triggering on-demand course sync for {semester} at {university}")
+                logger.info(
+                    "Course sync scope",
+                    extra={
+                        "semester": semester,
+                        "university": university,
+                        "subject_code": subject_code,
+                        "force": force,
+                        "cache_key": cache_key,
+                    },
+                )
                 
                 # Mark as in progress
                 try:
@@ -117,18 +135,46 @@ class DataPopulationService:
                     logger.warning(f"Could not mark sync in progress: {e}")
                 
                 # Trigger job
-                result = await sync_courses_job(semester=semester, university=university)
+                sync_kwargs: Dict[str, Any] = {
+                    "semester": semester,
+                    "university": university,
+                }
+                if subject_code:
+                    sync_kwargs["subject_code"] = subject_code
+
+                result = await sync_courses_job(**sync_kwargs)
+                logger.info(
+                    "Course sync raw result",
+                    extra={
+                        "success": result.get("success"),
+                        "source": result.get("source"),
+                        "fallback_used": result.get("fallback_used"),
+                        "courses_synced": result.get("courses_synced"),
+                        "sections_synced": result.get("sections_synced"),
+                        "warnings": result.get("warnings"),
+                        "error": result.get("error"),
+                    },
+                )
                 
                 if result.get("success"):
                     await cache_manager.set(cache_key, True, ttl=60)
-                    return PopulationResult(success=True, warnings=warnings)
+                    sync_warnings = result.get("warnings") or []
+                    return PopulationResult(
+                        success=True,
+                        warnings=[*warnings, *sync_warnings],
+                        source=result.get("source", "none"),
+                        fallback_used=bool(result.get("fallback_used", False)),
+                        is_partial=len(sync_warnings) > 0,
+                    )
                 else:
                     error_msg = result.get("error", "Unknown sync error")
                     logger.error(f"Course sync failed: {error_msg}")
                     return PopulationResult(
                         success=False,
-                        warnings=warnings,
+                        warnings=[*warnings, *(result.get("warnings") or [])],
                         error=f"Course sync failed: {error_msg}",
+                        source=result.get("source", "none"),
+                        fallback_used=bool(result.get("fallback_used", False)),
                     )
         
         except CircuitBreakerOpenError as e:

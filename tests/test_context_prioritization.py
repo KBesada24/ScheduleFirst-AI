@@ -46,6 +46,8 @@ sys.modules['mcp_server.utils.cache'] = MagicMock()
 sys.modules['mcp_server.utils.cache_manager'] = MagicMock()
 sys.modules['mcp_server.utils.circuit_breaker'] = MagicMock()
 sys.modules['mcp_server.utils.exceptions'] = MagicMock()
+sys.modules['mcp_server.utils.tool_result_logging'] = MagicMock()
+sys.modules['mcp_server.utils.chat_tool_result'] = MagicMock()
 sys.modules['mcp_server.models'] = MagicMock()
 
 # Assign dummy models to mocked modules
@@ -87,35 +89,37 @@ async def test_context_prioritization():
     }
 
     # Mock Ollama Client
-    with patch('api_server.OllamaClient') as MockOllamaClient:
-        mock_client = MagicMock()
-        MockOllamaClient.return_value = mock_client
-        
-        # Build mock response (no tool calls, just text)
-        mock_response = MagicMock()
-        mock_response.message.content = "Let me look up CSC 446 for you."
-        mock_response.message.tool_calls = None
-        
-        mock_client.chat.return_value = mock_response
+    mock_client = MagicMock()
 
+    # Build mock response (no tool calls, just text)
+    mock_response = MagicMock()
+    mock_response.message.content = "Let me look up CSC 446 for you."
+    mock_response.message.tool_calls = None
+
+    mock_client.chat.return_value = mock_response
+
+    mock_ollama_module = MagicMock()
+    mock_ollama_module.Client.return_value = mock_client
+
+    with patch.dict(sys.modules, {'ollama': mock_ollama_module}):
         # Call function
         result = await chat_with_ai(message)
 
-        # Verify that the system message contains the university from history
-        call_kwargs = mock_client.chat.call_args
-        messages = call_kwargs.kwargs.get('messages') or call_kwargs[1].get('messages')
-        
-        system_msg = messages[0]
-        assert system_msg['role'] == 'system'
-        system_content = system_msg['content']
-        
-        # University should be extracted from history ("College of Staten Island")
-        # since app context university is None
-        assert "University: College of Staten Island" in system_content
-        
-        # The system instruction should contain the critical rules about context usage
-        assert "CURRENT USER CONTEXT" in system_content
-        assert "CRITICAL RULES" in system_content
-        
-        # Verify the merged context in the response includes the extracted university
-        assert result["context"]["university"] == "College of Staten Island"
+    # Verify that the system message contains the university from history
+    call_kwargs = mock_client.chat.call_args
+    messages = call_kwargs.kwargs.get('messages') or call_kwargs[1].get('messages')
+
+    system_msg = messages[0]
+    assert system_msg['role'] == 'system'
+    system_content = system_msg['content']
+
+    # University should be extracted from history ("College of Staten Island")
+    # since app context university is None
+    assert "University: College of Staten Island" in system_content
+
+    # The system instruction should contain the critical rules about context usage
+    assert "CURRENT USER CONTEXT" in system_content
+    assert "CRITICAL RULES" in system_content
+
+    # Verify the merged context in the response includes the extracted university
+    assert result["context"]["university"] == "College of Staten Island"
