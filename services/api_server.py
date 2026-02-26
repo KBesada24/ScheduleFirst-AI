@@ -694,6 +694,7 @@ def get_next_semester(current_date: Optional[datetime] = None) -> str:
     Returns:
         Semester string like "Spring 2025" or "Fall 2025"
     """
+<<<<<<< Updated upstream
     return "Spring 2026"
     # from datetime import datetime
     # from zoneinfo import ZoneInfo
@@ -714,6 +715,27 @@ def get_next_semester(current_date: Optional[datetime] = None) -> str:
     # # Jan-Sep: Students registering for Fall (same year)
     # # In January, Spring semester has started, so next registration is Fall
     # return f"Fall {year}"
+=======
+    from datetime import datetime
+    from zoneinfo import ZoneInfo
+    
+    # Use Eastern Time for CUNY students
+    if current_date:
+        now = current_date
+    else:
+        now = datetime.now(ZoneInfo("America/New_York"))
+    
+    month = now.month
+    year = now.year
+    
+    # Oct-Dec: Students registering for Spring (next year)
+    if month >= 10:
+        return f"Spring {year + 1}"
+    
+    # Jan-Sep: Students registering for Fall (same year)
+    # In January, Spring semester has started, so next registration is Fall
+    return f"Fall {year}"
+>>>>>>> Stashed changes
 
 
 
