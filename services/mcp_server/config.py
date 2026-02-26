@@ -25,11 +25,7 @@ class Settings(BaseSettings):
             return v.lower() in ('true', '1', 'yes', 'on')
         return bool(v)
     
-    # Gemini Configuration
-    gemini_model: str = Field(default="gemini-3-flash-preview", alias="GEMINI_MODEL")
-    gemini_api_key: Optional[str] = Field(default=None, alias="GEMINI_API_KEY")
-    
-    # Ollama Configuration (Deprecated)
+    # Ollama Configuration
     ollama_host: str = Field(default="https://ollama.com", alias="OLLAMA_HOST")
     ollama_model: str = Field(default="qwen3-coder-next:cloud", alias="OLLAMA_MODEL")
     ollama_api_key: Optional[str] = Field(default=None, alias="OLLAMA_API_KEY")
@@ -128,6 +124,9 @@ class Settings(BaseSettings):
     model_config = SettingsConfigDict(
         env_file=(
             Path(__file__).parent.parent.parent / ".env",        # Root .env
+            Path(__file__).parent.parent.parent / ".env.local",  # Root .env.local
+            Path(__file__).parent.parent / ".env",               # services/.env
+            Path(__file__).parent.parent / ".env.local",         # services/.env.local
         ),
         env_file_encoding="utf-8",
         case_sensitive=False,

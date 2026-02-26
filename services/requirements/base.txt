@@ -1,6 +1,6 @@
 # Core dependencies
 fastmcp>=0.2.0
-google-genai>=1.0.0
+ollama>=0.4.0
 supabase>=2.4.0
 postgrest>=0.10.0  # Explicitly listed for postgrest.exceptions
 pydantic>=2.6.0
